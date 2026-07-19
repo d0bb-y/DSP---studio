@@ -1,15 +1,15 @@
 [theme]
-# A deep navy blue background
-backgroundColor = "#0A192F"
+# The main background color of the app
+backgroundColor = "#0E1117"
 
-# A slightly lighter navy for the sidebar
-secondaryBackgroundColor = "#112240"
+# The color of the sidebar
+secondaryBackgroundColor = "#1E212B"
 
-# Crisp, icy-white text
-textColor = "#CCD6F6"
+# The color of the text
+textColor = "#FAFAFA"
 
-# Neon Green/Cyan accent for sliders, buttons, and highlights
-primaryColor = "#64FFDA"
+# The accent color for buttons, sliders, and highlighted text (A sleek cyan)
+primaryColor = "#00E5FF"
 
-# Tech/Engineering font style
-font = "monospace"
+# The font style (options: "sans serif", "serif", or "monospace")
+font = "sans serif"
