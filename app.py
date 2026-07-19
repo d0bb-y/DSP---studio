@@ -351,9 +351,15 @@ source = st.sidebar.selectbox("Source", source_options)
 fs = signal = None
 
 if source == "Upload a file":
-    uploaded = st.sidebar.file_uploader(
-        "Upload (wav, mp3, m4a, aac, flac, ogg, aiff, wma, csv, txt, mat, edf, bdf)"
-    )
+    # 1. Print the text independently
+    st.sidebar.markdown("Upload (wav, mp3, m4a, aac, flac, ogg, aiff, wma, csv, txt, mat, edf, bdf)")
+    
+    # 2. Add an empty line to create your visual gap
+    st.sidebar.write("")
+    
+    # 3. Draw the upload box, but collapse its default label so it doesn't duplicate
+    uploaded = st.sidebar.file_uploader("hidden_label", label_visibility="collapsed")
+    
     if uploaded is not None:
         ext = os.path.splitext(uploaded.name)[1].lower()
         # FIX 1: Generate a unique ID to prevent multi-user file overwrite collisions
