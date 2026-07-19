@@ -351,12 +351,28 @@ source = st.sidebar.selectbox("Source", source_options)
 fs = signal = None
 
 if source == "Upload a file":
-    # 1. Create a clickable button that opens a small floating window
+    # 1. Create the popover with big headings and a vertical bulleted list
     with st.sidebar.popover("ℹ️ View Supported File Types"):
-        st.markdown("**Audio:** `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `aiff`, `wma`")
-        st.markdown("**Data:** `csv`, `txt`, `mat`, `edf`, `bdf`")
+        st.markdown(
+            "### Audio\n"
+            "- mp3\n"
+            "- wav\n"
+            "- m4a\n"
+            "- aac\n"
+            "- flac\n"
+            "- ogg\n"
+            "- aiff\n"
+            "- wma\n"
+            "\n"
+            "### Data\n"
+            "- csv\n"
+            "- txt\n"
+            "- mat\n"
+            "- edf\n"
+            "- bdf"
+        )
     
-    # 2. Add a tiny micro-gap between the new button and the upload box
+    # 2. Add the tiny micro-gap 
     st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
     
     # 3. Draw the upload box
