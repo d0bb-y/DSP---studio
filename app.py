@@ -351,13 +351,15 @@ source = st.sidebar.selectbox("Source", source_options)
 fs = signal = None
 
 if source == "Upload a file":
-    # 1. Print the text with a custom micro-gap (Change 8px to 4px for less gap, or 12px for more)
-    st.sidebar.markdown(
-        '<p style="margin-bottom: 8px;">Upload (wav, mp3, m4a, aac, flac, ogg, aiff, wma, csv, txt, mat, edf, bdf)</p>', 
-        unsafe_allow_html=True
-    )
+    # 1. Create a clickable button that opens a small floating window
+    with st.sidebar.popover("ℹ️ View Supported File Types"):
+        st.markdown("**Audio:** `wav`, `mp3`, `m4a`, `aac`, `flac`, `ogg`, `aiff`, `wma`")
+        st.markdown("**Data:** `csv`, `txt`, `mat`, `edf`, `bdf`")
     
-    # 2. Draw the upload box without its default label
+    # 2. Add a tiny micro-gap between the new button and the upload box
+    st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
+    
+    # 3. Draw the upload box
     uploaded = st.sidebar.file_uploader("hidden_label", label_visibility="collapsed")
     
     if uploaded is not None:
