@@ -351,31 +351,41 @@ source = st.sidebar.selectbox("Source", source_options)
 fs = signal = None
 
 if source == "Upload a file":
-    # 1. Create the popover with big headings and a vertical bulleted list
+    # 1. Create the popover window
     with st.sidebar.popover("ℹ️ View Supported File Types"):
-        st.markdown(
-            "### Audio\n"
-            "- mp3\n"
-            "- wav\n"
-            "- m4a\n"
-            "- aac\n"
-            "- flac\n"
-            "- ogg\n"
-            "- aiff\n"
-            "- wma\n"
-            "\n"
-            "### Data\n"
-            "- csv\n"
-            "- txt\n"
-            "- mat\n"
-            "- edf\n"
-            "- bdf"
-        )
+        
+        # 2. Split the window into two side-by-side columns
+        col1, col2 = st.columns(2)
+        
+        # 3. Put Audio in the left column
+        with col1:
+            st.markdown(
+                "### Audio\n"
+                "- mp3\n"
+                "- wav\n"
+                "- m4a\n"
+                "- aac\n"
+                "- flac\n"
+                "- ogg\n"
+                "- aiff\n"
+                "- wma"
+            )
+            
+        # 4. Put Data in the right column
+        with col2:
+            st.markdown(
+                "### Data\n"
+                "- csv\n"
+                "- txt\n"
+                "- mat\n"
+                "- edf\n"
+                "- bdf"
+            )
     
-    # 2. Add the tiny micro-gap 
+    # Add the tiny micro-gap 
     st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
     
-    # 3. Draw the upload box
+    # Draw the upload box
     uploaded = st.sidebar.file_uploader("hidden_label", label_visibility="collapsed")
     
     if uploaded is not None:
