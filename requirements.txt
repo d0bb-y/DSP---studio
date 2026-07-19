@@ -2,3 +2,5 @@ streamlit
 numpy
 scipy
 matplotlib
+h5py
+pyedflib
