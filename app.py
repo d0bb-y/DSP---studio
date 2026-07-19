@@ -351,41 +351,35 @@ source = st.sidebar.selectbox("Source", source_options)
 fs = signal = None
 
 if source == "Upload a file":
-    # 1. Create the popover window
-    with st.sidebar.popover("ℹ️ View Supported File Types"):
+    # 1. Create the popover and make the button perfectly fit the sidebar width
+    with st.sidebar.popover("ℹ️ View Supported File Types", use_container_width=True):
         
-        # 2. Split the window into two side-by-side columns
-        col1, col2 = st.columns(2)
-        
-        # 3. Put Audio in the left column
-        with col1:
-            st.markdown(
-                "### Audio\n"
-                "- mp3\n"
-                "- wav\n"
-                "- m4a\n"
-                "- aac\n"
-                "- flac\n"
-                "- ogg\n"
-                "- aiff\n"
-                "- wma"
-            )
-            
-        # 4. Put Data in the right column
-        with col2:
-            st.markdown(
-                "### Data\n"
-                "- csv\n"
-                "- txt\n"
-                "- mat\n"
-                "- edf\n"
-                "- bdf"
-            )
+        # 2. Use a tight HTML layout instead of bulky Streamlit columns
+        st.markdown(
+            """
+            <div style="display: flex; gap: 40px;">
+                <div>
+                    <h3 style="margin: 0px 0px 10px 0px;">Audio</h3>
+                    <ul style="margin: 0; padding-left: 20px;">
+                        <li>mp3</li><li>wav</li><li>m4a</li><li>aac</li>
+                        <li>flac</li><li>ogg</li><li>aiff</li><li>wma</li>
+                    </ul>
+                </div>
+                <div>
+                    <h3 style="margin: 0px 0px 10px 0px;">Data</h3>
+                    <ul style="margin: 0; padding-left: 20px;">
+                        <li>csv</li><li>txt</li><li>mat</li><li>edf</li><li>bdf</li>
+                    </ul>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
     
-    # Add the tiny micro-gap 
+    # 3. Add the tiny micro-gap 
     st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
     
-    # Draw the upload box
+    # 4. Draw the upload box
     uploaded = st.sidebar.file_uploader("hidden_label", label_visibility="collapsed")
     
     if uploaded is not None:
