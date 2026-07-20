@@ -815,6 +815,10 @@ with tab1:
 
     # Extract Poles and check for IIR stability explicitly
     z, p, k = tf2zpk(b, a)
+    
+    # Force trivial poles to appear at the origin for FIR filters
+    if family == "FIR" and len(z) > 0:
+        p = np.zeros(len(z))
     if len(p) > 0 and np.any(np.abs(p) >= 1.0):
         st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode. Please reduce the Filter Order or adjust the Cutoff frequency.")
         st.stop()  # <--- THIS PREVENTS THE CRASH
