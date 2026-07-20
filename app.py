@@ -538,10 +538,11 @@ if app_mode == "📈 1D Signal Studio":
         st.sidebar.error("Start time must be strictly before end time.")
         st.stop()
 
+    # FIX: Converted from selectbox to horizontal radio to prevent scrolling cut-off bug in Streamlit sidebar
     st.sidebar.markdown("---")
     st.sidebar.header("3. Export Settings")
-    graph_format = st.sidebar.selectbox("Graph Format", ["PNG", "PDF", "SVG"]).lower()
-    audio_format = st.sidebar.selectbox("Audio Format", ["WAV", "MP3", "FLAC"]).lower()
+    graph_format = st.sidebar.radio("Graph Format", ["PNG", "PDF", "SVG"], horizontal=True).lower()
+    audio_format = st.sidebar.radio("Audio Format", ["WAV", "MP3", "FLAC"], horizontal=True).lower()
 
     graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
     audio_mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}.get(audio_format, f"audio/{audio_format}")
@@ -757,14 +758,16 @@ elif app_mode == "🖼️ 2D Image Studio":
         "implemented with scipy.ndimage + numpy + Pillow only, no OpenCV."
     )
 
-    uploaded_image = st.file_uploader(
+    # FIX: Moved file uploader to sidebar to match 1D layout
+    st.sidebar.header("1. Image Source")
+    uploaded_image = st.sidebar.file_uploader(
         "Upload an image (PNG, JPG, JPEG)",
         type=["png", "jpg", "jpeg"],
         key="image_2d_uploader",
     )
 
     if uploaded_image is None:
-        st.info("Upload a PNG/JPG/JPEG image above to get started.")
+        st.info("Upload a PNG/JPG/JPEG image in the sidebar to get started.")
     else:
         try:
             image_bytes = uploaded_image.getvalue()
@@ -773,9 +776,11 @@ elif app_mode == "🖼️ 2D Image Studio":
             st.error(f"Couldn't read this image: {e}")
         else:
             pil_original = Image.fromarray(original_array)
-
-            st.markdown("---")
-            operation = st.selectbox(
+            
+            # FIX: Moved DSP operations and parameters to sidebar for clean UI consistency
+            st.sidebar.markdown("---")
+            st.sidebar.header("2. DSP Operations")
+            operation = st.sidebar.selectbox(
                 "2D DSP Operation",
                 ["Sobel Edge Detection", "Gaussian Blur", "Image Sharpening"],
                 key="image_2d_operation",
@@ -785,7 +790,7 @@ elif app_mode == "🖼️ 2D Image Studio":
 
             sigma = 2.0
             if operation == "Gaussian Blur":
-                sigma = st.slider(
+                sigma = st.sidebar.slider(
                     "Sigma (blur strength)",
                     min_value=0.1, max_value=10.0, value=2.0, step=0.1,
                     key="image_2d_sigma",
@@ -793,6 +798,7 @@ elif app_mode == "🖼️ 2D Image Studio":
                          "pixels. Higher sigma = stronger lowpass effect.",
                 )
 
+            # Execution happens here in the main body based on sidebar inputs
             if operation == "Sobel Edge Detection":
                 filtered_array = apply_sobel_edge_detection(original_array)
                 result_caption = "Gradient magnitude: sqrt(Gx^2 + Gy^2)"
@@ -821,6 +827,8 @@ elif app_mode == "🖼️ 2D Image Studio":
             }
             download_buf = io.BytesIO()
             pil_filtered.save(download_buf, format="PNG")
+            
+            st.markdown("---")
             st.download_button(
                 label="📥 Download Filtered Image (PNG)",
                 data=download_buf.getvalue(),
