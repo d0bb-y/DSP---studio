@@ -578,10 +578,7 @@ if app_mode == "📈 1D Signal Studio":
     graph_format = st.sidebar.selectbox("Graph Format", ["PNG", "PDF", "SVG"]).lower()
     audio_format = st.sidebar.selectbox("Audio Format", ["WAV", "MP3", "FLAC"]).lower()
     
-    # ---------------------------------------------------------
-    # UI FIX: Add invisible spacing at the bottom of the sidebar
-    # so dropdown menus have room to expand downwards properly.
-    # ---------------------------------------------------------
+    # Bottom margin spacer to prevent cutoff
     st.sidebar.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
 
     graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
@@ -875,10 +872,7 @@ elif app_mode == "🖼️ 2D Image Studio":
         st.sidebar.header("3. Export Settings")
         image_format = st.sidebar.selectbox("Export Format", ["PNG", "JPG", "BMP"]).lower()
         
-        # ---------------------------------------------------------
-        # UI FIX: Add invisible spacing at the bottom of the sidebar
-        # so dropdown menus have room to expand downwards properly.
-        # ---------------------------------------------------------
+        # Bottom margin spacer to prevent cutoff
         st.sidebar.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
         
         pil_format = "JPEG" if image_format == "jpg" else image_format.upper()
