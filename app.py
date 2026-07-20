@@ -746,7 +746,12 @@ with tab1:
     n = len(signal)
     t = np.arange(n) / fs
     freqs = np.fft.rfftfreq(n, 1 / fs)
-    magnitude = np.abs(np.fft.rfft(signal)) / n
+    
+    # FIX: Bypass 1/N scaling for the Impulse to match textbook DSP theory (= 1)
+    if source == "Demo: Impulse (Delta) Signal":
+        magnitude = np.abs(np.fft.rfft(signal))
+    else:
+        magnitude = np.abs(np.fft.rfft(signal)) / n
 
     st.header("Signal Analysis")
     fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
@@ -819,6 +824,7 @@ with tab1:
     # Force trivial poles to appear at the origin for FIR filters
     if family == "FIR" and len(z) > 0:
         p = np.zeros(len(z))
+
     if len(p) > 0 and np.any(np.abs(p) >= 1.0):
         st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode. Please reduce the Filter Order or adjust the Cutoff frequency.")
         st.stop()  # <--- THIS PREVENTS THE CRASH
@@ -830,7 +836,12 @@ with tab1:
         st.stop()
 
     freqs_f = np.fft.rfftfreq(len(filtered), 1 / fs)
-    mag_f = np.abs(np.fft.rfft(filtered)) / len(filtered)
+    
+    if source == "Demo: Impulse (Delta) Signal":
+        mag_f = np.abs(np.fft.rfft(filtered))
+    else:
+        mag_f = np.abs(np.fft.rfft(filtered)) / len(filtered)
+        
     w, h = freqz(b, a, worN=2048, fs=fs)
 
     title = f"{family} {ftype}  cutoff={cutoff:.0f}Hz" + (f", {cutoff2:.0f}Hz" if needs_band else "")
