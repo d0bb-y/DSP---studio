@@ -5,6 +5,12 @@ Run locally:    streamlit run app.py
 Deploy free:    push this file + requirements.txt to a GitHub repo,
                 then deploy at https://share.streamlit.io (Streamlit
                 Community Cloud reads requirements.txt automatically).
+
+Tabs:
+    1D Signal Studio - audio/CSV/MAT/EDF signal analysis, FFT, spectrogram,
+        and IIR/FIR filter design with Z-plane analysis.
+    2D Image Studio  - Sobel edge detection, Gaussian blur, and convolution
+        sharpening on PNG/JPG images (scipy.ndimage only, no OpenCV).
 """
 
 import os
@@ -20,6 +26,8 @@ import matplotlib.pyplot as plt
 import streamlit as st
 from scipy.io import wavfile, loadmat
 from scipy.signal import spectrogram, firwin, butter, lfilter, filtfilt, freqz, square, sawtooth, chirp, tf2zpk
+from scipy import ndimage
+from PIL import Image
 
 st.set_page_config(page_title="DSP Signal Analyzer", layout="wide")
 
@@ -324,349 +332,586 @@ def apply_filter(b, a, signal):
     return lfilter(b, a, signal)
 
 # ============================================================================
+# 2D IMAGE DSP ENGINE - pure functions, no Streamlit-specific code
+# Uses ONLY scipy.ndimage + numpy + Pillow (no OpenCV / other heavy deps)
+# ============================================================================
+
+@st.cache_data(show_spinner=False)
+def load_image_array(image_bytes):
+    """
+    Decode uploaded image bytes into a standardized numpy array.
+
+    .convert("RGB") normalizes grayscale / palette / RGBA source images into
+    a consistent 3-channel uint8 array, so every filter below can assume the
+    same (H, W, 3) shape without extra branching.
+    """
+    pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    return np.array(pil_image)
+
+
+@st.cache_data(show_spinner="Detecting edges...")
+def apply_sobel_edge_detection(image_array):
+    """
+    Sobel edge detection.
+
+    Computes the gradient along the column/x axis (Gx - responds to
+    VERTICAL edges) and along the row/y axis (Gy - responds to HORIZONTAL
+    edges) with scipy.ndimage.sobel, then combines them into a single
+    gradient-magnitude edge map:
+
+        |G| = sqrt(Gx^2 + Gy^2)
+
+    Edge detection runs on luminance (ITU-R BT.601 weights) rather than
+    per-channel RGB: per-channel Sobel mostly adds color-fringing noise
+    without extra structural information, and a single grayscale edge map
+    is the standard, easiest-to-interpret output.
+
+    Parameters
+    ----------
+    image_array : np.ndarray, shape (H, W, 3), dtype uint8
+
+    Returns
+    -------
+    np.ndarray, shape (H, W), dtype uint8 - grayscale edge-magnitude map
+    """
+    grayscale = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
+
+    gx = ndimage.sobel(grayscale, axis=1, mode="reflect")  # d/dx -> vertical edges
+    gy = ndimage.sobel(grayscale, axis=0, mode="reflect")  # d/dy -> horizontal edges
+
+    magnitude = np.hypot(gx, gy)  # combine X and Y gradients into one map
+
+    # Normalize to the full 0-255 range for display. Guard against a blank
+    # / perfectly flat image, where the peak gradient would be exactly 0.
+    peak = magnitude.max()
+    if peak > 0:
+        magnitude = (magnitude / peak) * 255.0
+    return magnitude.astype(np.uint8)
+
+
+@st.cache_data(show_spinner="Applying Gaussian blur...")
+def apply_gaussian_blur(image_array, sigma):
+    """
+    Gaussian blur = a 2D lowpass filter. Attenuates high-spatial-frequency
+    content (fine detail, noise) while preserving low-frequency structure -
+    the 2D analogue of the lowpass filters in the 1D Signal Studio.
+
+    sigma is set to 0 on the 3rd (channel) axis so blurring stays within
+    each of the R/G/B channels independently, instead of bleeding color
+    into color.
+
+    Parameters
+    ----------
+    image_array : np.ndarray, shape (H, W, 3), dtype uint8
+    sigma : float - standard deviation of the Gaussian kernel, in pixels.
+        Larger sigma -> wider kernel -> stronger blur -> more aggressive
+        attenuation of high spatial frequencies.
+
+    Returns
+    -------
+    np.ndarray, shape (H, W, 3), dtype uint8
+    """
+    blurred = ndimage.gaussian_filter(
+        image_array.astype(np.float64), sigma=(sigma, sigma, 0), mode="reflect"
+    )
+    # Gaussian blur is a weighted average so it can't overshoot the input
+    # range in theory, but clip anyway as cheap insurance against float
+    # rounding at the extremes.
+    return np.clip(blurred, 0, 255).astype(np.uint8)
+
+
+@st.cache_data(show_spinner="Sharpening...")
+def apply_sharpening(image_array):
+    """
+    Image sharpening via a 2D convolution highpass spatial filter (a
+    classic unsharp-masking kernel). Boosts each pixel relative to its 4
+    immediate neighbors, emphasizing high-spatial-frequency detail/edges:
+
+            [ 0  -1   0]
+            [-1   5  -1]
+            [ 0  -1   0]
+
+    The kernel's coefficients sum to 1, so flat regions are left unchanged
+    and only local contrast (high-frequency content) is boosted. Applied
+    per-channel via scipy.ndimage.convolve so R/G/B channels are filtered
+    independently rather than mixed together.
+
+    Parameters
+    ----------
+    image_array : np.ndarray, shape (H, W, 3), dtype uint8
+
+    Returns
+    -------
+    np.ndarray, shape (H, W, 3), dtype uint8
+    """
+    sharpen_kernel = np.array([
+        [ 0, -1,  0],
+        [-1,  5, -1],
+        [ 0, -1,  0],
+    ])
+
+    sharpened = np.empty_like(image_array, dtype=np.float64)
+    for channel in range(image_array.shape[2]):
+        sharpened[..., channel] = ndimage.convolve(
+            image_array[..., channel].astype(np.float64), sharpen_kernel, mode="reflect"
+        )
+
+    # Convolution can push values outside [0, 255] (overshoot/undershoot at
+    # edges) - clip back to a valid, displayable image range.
+    return np.clip(sharpened, 0, 255).astype(np.uint8)
+
+
+# ============================================================================
 # WEB UI
 # ============================================================================
 
 st.title("Universal DSP Signal Analyzer & Filter Design Studio")
 
-st.sidebar.header("1. Signal Source")
-source_options = [
-    "Upload a file",
-    "Demo: Real Audio (Voice)",
-    "Demo: ECG",
-    "Demo: Sensor",
-    "Demo: Pure Sine Wave",
-    "Demo: Multi-Tone Signal",
-    "Demo: Noisy Sine Wave",
-    "Demo: Square Wave",
-    "Demo: Triangle Wave",
-    "Demo: Sawtooth Wave",
-    "Demo: Chirp Signal",
-    "Demo: White Noise",
-    "Demo: Impulse (Delta) Signal",
-    "Demo: Step Signal"
-]
-source = st.sidebar.selectbox("Source", source_options)
+tab1, tab2 = st.tabs(["📈 1D Signal Studio", "🖼️ 2D Image Studio"])
 
-fs = signal = None
+# NOTE ON ORDERING: tab2's `with` block is written BEFORE tab1's below, even
+# though tab1 ("1D Signal Studio") displays FIRST (left-most) in the UI -
+# st.tabs() only controls *display* order via the labels above, not the
+# order `with` blocks run in. This ordering is deliberate, not a mistake:
+# Streamlit executes every `with tabN:` block on every rerun regardless of
+# which tab is active, and the existing 1D Signal Studio code below calls
+# st.stop() in several places (no file uploaded yet, filter instability,
+# trim errors, etc). st.stop() halts the ENTIRE script immediately, so
+# anything written after it never runs. Running tab2 first guarantees the
+# 2D Image Studio always renders, with zero changes to the existing 1D
+# control flow.
 
-if source == "Upload a file":
-    # 1. Create the popover and make the button perfectly fit the sidebar width
-    with st.sidebar.popover("ℹ️ View Supported File Types", use_container_width=True):
-        
-        # 2. Use a tight HTML layout instead of bulky Streamlit columns
-        st.markdown(
-            """
-            <div style="display: flex; gap: 40px;">
-                <div>
-                    <h3 style="margin: 0px 0px 10px 0px;">Audio</h3>
-                    <ul style="margin: 0; padding-left: 20px;">
-                        <li>mp3</li><li>wav</li><li>m4a</li><li>aac</li>
-                        <li>flac</li><li>ogg</li><li>aiff</li><li>wma</li>
-                    </ul>
-                </div>
-                <div>
-                    <h3 style="margin: 0px 0px 10px 0px;">Data</h3>
-                    <ul style="margin: 0; padding-left: 20px;">
-                        <li>csv</li><li>txt</li><li>mat</li><li>edf</li><li>bdf</li>
-                    </ul>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-    
-    # 3. Add the tiny micro-gap 
-    st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
-    
-    # 4. Draw the upload box
-    uploaded = st.sidebar.file_uploader("hidden_label", label_visibility="collapsed")
-    
-    if uploaded is not None:
-        ext = os.path.splitext(uploaded.name)[1].lower()
-        # FIX 1: Generate a unique ID to prevent multi-user file overwrite collisions
-        safe_filename = f"{uuid.uuid4().hex}_{uploaded.name}"
-        tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
-        
-        with open(tmp_path, "wb") as f:
-            f.write(uploaded.getbuffer())
+with tab2:
+    st.header("🖼️ 2D Image Studio")
+    st.caption(
+        "Upload an image to explore 2D spatial-domain DSP: edge detection, "
+        "Gaussian (lowpass) blurring, and convolution-based sharpening - "
+        "implemented with scipy.ndimage + numpy + Pillow only, no OpenCV."
+    )
 
-        fs_override = None
-        if ext in ('.csv', '.txt'):
-            manual_fs = st.sidebar.number_input(
-                "Sample rate in Hz (only needed for single-column CSV)",
-                min_value=0, value=0, step=1
-            )
-            fs_override = float(manual_fs) if manual_fs > 0 else None
+    uploaded_image = st.file_uploader(
+        "Upload an image (PNG, JPG, JPEG)",
+        type=["png", "jpg", "jpeg"],
+        key="image_2d_uploader",
+    )
 
+    if uploaded_image is None:
+        st.info("Upload a PNG/JPG/JPEG image above to get started.")
+    else:
         try:
-            fs, signal = load_any_signal(tmp_path, fs_override=fs_override)
-        except ValueError as e:
-            if ext == '.mat':
-                st.sidebar.warning(f"{e} Enter a sample rate below to proceed.")
-                manual_fs = st.sidebar.number_input(
-                    "Sample rate in Hz", min_value=0, value=0, step=1, key="mat_fs_fallback"
+            # Read bytes once so the result is cache-able: st.cache_data
+            # hashes its arguments, and a stable `bytes` object is what
+            # lets the cache actually hit on reruns triggered by unrelated
+            # 1D Signal Studio widgets (both tabs re-run on every rerun).
+            image_bytes = uploaded_image.getvalue()
+            original_array = load_image_array(image_bytes)
+        except Exception as e:
+            st.error(f"Couldn't read this image: {e}")
+        else:
+            pil_original = Image.fromarray(original_array)
+
+            st.markdown("---")
+            operation = st.selectbox(
+                "2D DSP Operation",
+                ["Sobel Edge Detection", "Gaussian Blur", "Image Sharpening"],
+                key="image_2d_operation",
+                help="Sobel = highpass edge/gradient detector. Gaussian Blur "
+                     "= lowpass filter. Sharpening = highpass convolution.",
+            )
+
+            # Gaussian Blur is the only operation with a tunable parameter.
+            sigma = 2.0
+            if operation == "Gaussian Blur":
+                sigma = st.slider(
+                    "Sigma (blur strength)",
+                    min_value=0.1, max_value=10.0, value=2.0, step=0.1,
+                    key="image_2d_sigma",
+                    help="Standard deviation of the Gaussian kernel, in "
+                         "pixels. Higher sigma = stronger lowpass effect.",
                 )
-                if manual_fs <= 0:
+
+            # --- Apply the selected 2D DSP operation ---
+            if operation == "Sobel Edge Detection":
+                filtered_array = apply_sobel_edge_detection(original_array)
+                result_caption = "Gradient magnitude: sqrt(Gx^2 + Gy^2)"
+            elif operation == "Gaussian Blur":
+                filtered_array = apply_gaussian_blur(original_array, sigma)
+                result_caption = f"Lowpass filter, sigma = {sigma}"
+            else:  # Image Sharpening
+                filtered_array = apply_sharpening(original_array)
+                result_caption = "Highpass 3x3 convolution kernel"
+
+            pil_filtered = Image.fromarray(filtered_array)
+
+            # --- Side-by-side comparison ---
+            img_col1, img_col2 = st.columns(2)
+            with img_col1:
+                st.subheader("Original")
+                st.image(pil_original, width="stretch")
+            with img_col2:
+                st.subheader(operation)
+                st.caption(result_caption)
+                st.image(pil_filtered, width="stretch")
+
+            # --- Download the filtered result ---
+            # Always export as PNG (lossless) regardless of the source
+            # format, so edge/sharpen results aren't degraded by JPEG
+            # compression artifacts.
+            operation_slugs = {
+                "Sobel Edge Detection": "sobel_edges",
+                "Gaussian Blur": "gaussian_blur",
+                "Image Sharpening": "sharpened",
+            }
+            download_buf = io.BytesIO()
+            pil_filtered.save(download_buf, format="PNG")
+            st.download_button(
+                label="📥 Download Filtered Image (PNG)",
+                data=download_buf.getvalue(),
+                file_name=f"filtered_{operation_slugs[operation]}.png",
+                mime="image/png",
+                key="image_2d_download",
+            )
+
+with tab1:
+
+    st.sidebar.header("1. Signal Source")
+    source_options = [
+        "Upload a file",
+        "Demo: Real Audio (Voice)",
+        "Demo: ECG",
+        "Demo: Sensor",
+        "Demo: Pure Sine Wave",
+        "Demo: Multi-Tone Signal",
+        "Demo: Noisy Sine Wave",
+        "Demo: Square Wave",
+        "Demo: Triangle Wave",
+        "Demo: Sawtooth Wave",
+        "Demo: Chirp Signal",
+        "Demo: White Noise",
+        "Demo: Impulse (Delta) Signal",
+        "Demo: Step Signal"
+    ]
+    source = st.sidebar.selectbox("Source", source_options)
+
+    fs = signal = None
+
+    if source == "Upload a file":
+        # 1. Create the popover and make the button perfectly fit the sidebar width
+        with st.sidebar.popover("ℹ️ View Supported File Types", use_container_width=True):
+
+            # 2. Use a tight HTML layout instead of bulky Streamlit columns
+            st.markdown(
+                """
+                <div style="display: flex; gap: 40px;">
+                    <div>
+                        <h3 style="margin: 0px 0px 10px 0px;">Audio</h3>
+                        <ul style="margin: 0; padding-left: 20px;">
+                            <li>mp3</li><li>wav</li><li>m4a</li><li>aac</li>
+                            <li>flac</li><li>ogg</li><li>aiff</li><li>wma</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <h3 style="margin: 0px 0px 10px 0px;">Data</h3>
+                        <ul style="margin: 0; padding-left: 20px;">
+                            <li>csv</li><li>txt</li><li>mat</li><li>edf</li><li>bdf</li>
+                        </ul>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        # 3. Add the tiny micro-gap 
+        st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
+
+        # 4. Draw the upload box
+        uploaded = st.sidebar.file_uploader("hidden_label", label_visibility="collapsed")
+
+        if uploaded is not None:
+            ext = os.path.splitext(uploaded.name)[1].lower()
+            # FIX 1: Generate a unique ID to prevent multi-user file overwrite collisions
+            safe_filename = f"{uuid.uuid4().hex}_{uploaded.name}"
+            tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
+
+            with open(tmp_path, "wb") as f:
+                f.write(uploaded.getbuffer())
+
+            fs_override = None
+            if ext in ('.csv', '.txt'):
+                manual_fs = st.sidebar.number_input(
+                    "Sample rate in Hz (only needed for single-column CSV)",
+                    min_value=0, value=0, step=1
+                )
+                fs_override = float(manual_fs) if manual_fs > 0 else None
+
+            try:
+                fs, signal = load_any_signal(tmp_path, fs_override=fs_override)
+            except ValueError as e:
+                if ext == '.mat':
+                    st.sidebar.warning(f"{e} Enter a sample rate below to proceed.")
+                    manual_fs = st.sidebar.number_input(
+                        "Sample rate in Hz", min_value=0, value=0, step=1, key="mat_fs_fallback"
+                    )
+                    if manual_fs <= 0:
+                        st.stop()
+                    try:
+                        fs, signal = load_any_signal(tmp_path, fs_override=float(manual_fs))
+                    except Exception as e2:
+                        st.sidebar.error(str(e2))
+                        st.stop()
+                else:
+                    st.sidebar.error(str(e))
                     st.stop()
-                try:
-                    fs, signal = load_any_signal(tmp_path, fs_override=float(manual_fs))
-                except Exception as e2:
-                    st.sidebar.error(str(e2))
-                    st.stop()
-            else:
+            except Exception as e:
                 st.sidebar.error(str(e))
                 st.stop()
-        except Exception as e:
-            st.sidebar.error(str(e))
+        else:
+            st.info("Upload a file in the sidebar, or pick a demo source to try it instantly.")
             st.stop()
-    else:
-        st.info("Upload a file in the sidebar, or pick a demo source to try it instantly.")
-        st.stop()
-elif source == "Demo: Real Audio (Voice)":
-    with st.spinner("Loading real audio sample..."):
-        try:
-            fs, signal = generate_real_audio_demo()
-        except Exception as e:
-            st.sidebar.error(str(e))
-            st.stop()
-elif source == "Demo: ECG":
-    fs, signal = generate_ecg_demo()
-elif source == "Demo: Sensor":
-    fs, signal = generate_sensor_demo()
-elif source == "Demo: Pure Sine Wave":
-    fs, signal = gen_pure_sine()
-elif source == "Demo: Multi-Tone Signal":
-    fs, signal = gen_multi_tone()
-elif source == "Demo: Noisy Sine Wave":
-    fs, signal = gen_noisy_sine()
-elif source == "Demo: Square Wave":
-    fs, signal = gen_square()
-elif source == "Demo: Triangle Wave":
-    fs, signal = gen_triangle()
-elif source == "Demo: Sawtooth Wave":
-    fs, signal = gen_sawtooth()
-elif source == "Demo: Chirp Signal":
-    fs, signal = gen_chirp()
-elif source == "Demo: White Noise":
-    fs, signal = gen_white_noise()
-elif source == "Demo: Impulse (Delta) Signal":
-    fs, signal = gen_impulse()
-elif source == "Demo: Step Signal":
-    fs, signal = gen_step()
-
-st.sidebar.success(f"{fs:.1f} Hz  |  {len(signal) / fs:.2f} sec  |  {len(signal)} samples")
-
-full_signal = signal
-
-st.sidebar.markdown("---")
-st.sidebar.header("2. Trim Signal (Optional)")
-full_duration = float(len(full_signal) / fs)
-trim_start, trim_end = st.sidebar.slider(
-    "Select time range (seconds)", min_value=0.0, max_value=full_duration, value=(0.0, full_duration)
-)
-
-if trim_end > trim_start:
-    start_sample = int(trim_start * fs)
-    end_sample = int(trim_end * fs)
-    signal = full_signal[start_sample:end_sample]
-    st.sidebar.caption(f"✂️ Analyzing: {len(signal)} samples ({len(signal)/fs:.2f}s)")
-else:
-    st.sidebar.error("Start time must be strictly before end time.")
-    st.stop()
-
-st.sidebar.markdown("---")
-st.sidebar.header("3. Export Settings")
-graph_format = st.sidebar.selectbox("Graph Format", ["PNG", "PDF", "SVG"]).lower()
-audio_format = st.sidebar.selectbox("Audio Format", ["WAV", "MP3", "FLAC"]).lower()
-
-graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
-audio_mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}.get(audio_format, f"audio/{audio_format}")
-
-st.header("Signal Metrics & Statistics")
-peak_to_peak = float(np.max(signal) - np.min(signal))
-rms = float(np.sqrt(np.mean(np.square(signal))))
-peak_abs = float(np.max(np.abs(signal)))
-crest_factor = (peak_abs / rms) if rms > 0 else 0.0
-mean_val = float(np.mean(signal))
-variance_val = float(np.var(signal))
-
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("Peak-to-Peak Amplitude", f"{peak_to_peak:.4g}", help="Difference between the maximum and minimum values.")
-m2.metric("RMS Power", f"{rms:.4g}", help="Root Mean Square - the effective amplitude of the signal.")
-m3.metric("Crest Factor", f"{crest_factor:.4g}", help="Peak amplitude divided by RMS.")
-m4.metric("Mean", f"{mean_val:.4g}", help="Average sample value (DC offset).")
-m5.metric("Variance", f"{variance_val:.4g}", help="Average squared deviation from the mean.")
-
-n = len(signal)
-t = np.arange(n) / fs
-freqs = np.fft.rfftfreq(n, 1 / fs)
-magnitude = np.abs(np.fft.rfft(signal)) / n
-
-st.header("Signal Analysis")
-fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
-axs1[0].plot(t + trim_start, signal, linewidth=0.7)
-axs1[0].set_title("Waveform (Time Domain)")
-axs1[0].set_xlabel("Time (s)"); axs1[0].set_ylabel("Amplitude")
-
-axs1[1].plot(freqs, magnitude, linewidth=0.7)
-axs1[1].set_title("Magnitude Spectrum (FFT)")
-axs1[1].set_xlabel("Frequency (Hz)"); axs1[1].set_ylabel("Magnitude")
-axs1[1].set_xlim(0, fs / 2)
-
-# FIX 2: Guardrail - Only compute Spectrogram if we have enough data points
-if n >= 256:
-    f_spec, t_spec, Sxx = spectrogram(signal, fs, nperseg=min(1024, n), noverlap=min(512, n // 2))
-    im = axs1[2].pcolormesh(t_spec + trim_start, f_spec, 10 * np.log10(Sxx + 1e-12), shading="gouraud")
-    axs1[2].set_title("Spectrogram")
-    axs1[2].set_xlabel("Time (s)")
-    axs1[2].set_ylabel("Frequency (Hz)")
-    fig1.colorbar(im, ax=axs1[2], label="dB")
-else:
-    axs1[2].text(0.5, 0.5, "Not enough data for Spectrogram", ha='center', va='center', fontsize=12)
-    axs1[2].set_axis_off()
-
-plt.tight_layout()
-st.pyplot(fig1)
-
-buf1 = io.BytesIO()
-fig1.savefig(buf1, format=graph_format)
-st.download_button(
-    label=f"📥 Download Analysis Graph ({graph_format.upper()})", data=buf1.getvalue(),
-    file_name=f"signal_analysis.{graph_format}", mime=graph_mime
-)
-plt.close(fig1)
-
-st.header("Filter Design")
-c1, c2, c3 = st.columns(3)
-family = c1.selectbox("Family", ["FIR", "IIR"])
-ftype = c2.selectbox("Filter type", ["lowpass", "highpass", "bandpass", "notch"])
-
-window_type = "hamming"
-iir_order = 4
-if family == "FIR":
-    window_type = c3.selectbox("Window Function", ["hamming", "hann", "blackman", "bartlett", "boxcar"])
-else:
-    iir_order = c3.number_input("Filter Order", min_value=1, max_value=12, value=4, step=1)
-
-nyq = fs / 2
-smax = round(nyq * 0.98, 1)
-if smax < 1.0:
-    st.error("Sample rate is too low to design a filter here. Check the detected/entered sample rate.")
-    st.stop()
-cutoff = st.slider("Cutoff (Hz)", min_value=1.0, max_value=float(smax), value=float(min(200.0, smax * 0.2)))
-cutoff2 = None
-needs_band = ftype in ("bandpass", "notch")
-if needs_band:
-    cutoff2 = st.slider("Cutoff2 (Hz)", min_value=1.0, max_value=float(smax), value=float(min(1500.0, smax * 0.5)))
-    if cutoff2 <= cutoff:
-        st.error(f"Cutoff2 ({cutoff2:.0f} Hz) must be greater than Cutoff ({cutoff:.0f} Hz).")
-        st.stop()
-
-if family == "FIR":
-    b, a = design_fir(ftype, fs, cutoff, cutoff2, window=window_type)
-else:
-    b, a = design_iir(ftype, fs, cutoff, cutoff2, order=iir_order)
-
-# Extract Poles and check for IIR stability explicitly
-z, p, k = tf2zpk(b, a)
-if len(p) > 0 and np.any(np.abs(p) >= 1.0):
-    st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode. Please reduce the Filter Order or adjust the Cutoff frequency.")
-    st.stop()  # <--- THIS PREVENTS THE CRASH
-
-try:
-    filtered = apply_filter(b, a, signal)
-except Exception as e:
-    st.error(f"Filtering failed (likely due to instability): {e}")
-    st.stop()
-
-freqs_f = np.fft.rfftfreq(len(filtered), 1 / fs)
-mag_f = np.abs(np.fft.rfft(filtered)) / len(filtered)
-w, h = freqz(b, a, worN=2048, fs=fs)
-
-title = f"{family} {ftype}  cutoff={cutoff:.0f}Hz" + (f", {cutoff2:.0f}Hz" if needs_band else "")
-
-fig2, axs2 = plt.subplots(4, 1, figsize=(10, 12))
-axs2[0].plot(t + trim_start, signal, label="Original", alpha=0.6)
-axs2[0].plot(t + trim_start, filtered, label="Filtered", alpha=0.8)
-axs2[0].set_title(title + " - Waveform")
-axs2[0].set_xlabel("Time (s)"); axs2[0].legend()
-
-axs2[1].plot(freqs, magnitude, label="Original", alpha=0.6)
-axs2[1].plot(freqs_f, mag_f, label="Filtered", alpha=0.8)
-axs2[1].set_title("Spectrum Comparison")
-axs2[1].set_xlabel("Frequency (Hz)"); axs2[1].set_xlim(0, fs / 2); axs2[1].legend()
-
-# FIX 3: Use 20*log10 for standard Amplitude dB, not 40
-axs2[2].plot(w, 20 * np.log10(np.abs(h) + 1e-12))
-axs2[2].set_title(f"{family} {ftype} Effective Frequency Response")
-axs2[2].set_xlabel("Frequency (Hz)"); axs2[2].set_xlim(0, fs / 2); axs2[2].grid(alpha=0.3)
-
-axs2[3].add_patch(plt.Circle((0, 0), 1, color='black', fill=False, linestyle='--', alpha=0.5, label='Unit Circle'))
-
-# FIX 4: Protect the Zeros array from throwing empty array errors
-if len(z) > 0:
-    axs2[3].scatter(np.real(z), np.imag(z), marker='o', edgecolors='b', facecolors='none', label='Zeros (O)')
-if len(p) > 0:
-    axs2[3].scatter(np.real(p), np.imag(p), marker='x', color='r', label='Poles (X)')
-axs2[3].axhline(0, color='gray', alpha=0.3)
-axs2[3].axvline(0, color='gray', alpha=0.3)
-axs2[3].set_title("Filter Stability: Pole-Zero Plot (Z-Plane)")
-axs2[3].set_xlabel("Real Axis"); axs2[3].set_ylabel("Imaginary Axis")
-axs2[3].axis('equal') 
-axs2[3].legend(loc='upper right')
-
-plt.tight_layout()
-st.pyplot(fig2)
-
-buf2 = io.BytesIO()
-fig2.savefig(buf2, format=graph_format)
-st.download_button(
-    label=f"📥 Download Filter Graph ({graph_format.upper()})", data=buf2.getvalue(),
-    file_name=f"filter_comparison.{graph_format}", mime=graph_mime
-)
-plt.close(fig2)
-
-st.header("Listen")
-
-# Global Normalization (Prevents trimmed volume discrepancies)
-global_peak = max(np.max(np.abs(full_signal)), np.max(np.abs(filtered)), 1e-9)
-
-full_play_int = np.int16((full_signal / global_peak) * 32767)
-filt_play_int = np.int16((filtered / global_peak) * 32767)
-
-ac1, ac2 = st.columns(2)
-with ac1:
-    st.caption("Original (Full File)")
-    st.audio(full_play_int, sample_rate=int(fs))
-with ac2:
-    st.caption(f"Filtered & Trimmed ({title})")
-    st.audio(filt_play_int, sample_rate=int(fs))
-
-    if audio_format == "wav":
-        wav_buf = io.BytesIO()
-        wavfile.write(wav_buf, int(fs), filt_play_int)
-        audio_data = wav_buf.getvalue()
-    else:
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_wav:
-            wavfile.write(tmp_wav.name, int(fs), filt_play_int)
-            tmp_out = tmp_wav.name.replace('.wav', f'.{audio_format}')
+    elif source == "Demo: Real Audio (Voice)":
+        with st.spinner("Loading real audio sample..."):
             try:
-                result = subprocess.run(['ffmpeg', '-y', '-i', tmp_wav.name, tmp_out], capture_output=True, text=True)
-            except FileNotFoundError:
-                os.remove(tmp_wav.name)
-                st.error("ffmpeg is not installed. Choose WAV instead.")
+                fs, signal = generate_real_audio_demo()
+            except Exception as e:
+                st.sidebar.error(str(e))
                 st.stop()
-            if result.returncode != 0 or not os.path.exists(tmp_out):
-                os.remove(tmp_wav.name)
-                st.error(f"Encoding failed: {result.stderr.strip()[-500:]}")
-                st.stop()
-            with open(tmp_out, 'rb') as f_out:
-                audio_data = f_out.read()
-            os.remove(tmp_wav.name)
-            os.remove(tmp_out)
+    elif source == "Demo: ECG":
+        fs, signal = generate_ecg_demo()
+    elif source == "Demo: Sensor":
+        fs, signal = generate_sensor_demo()
+    elif source == "Demo: Pure Sine Wave":
+        fs, signal = gen_pure_sine()
+    elif source == "Demo: Multi-Tone Signal":
+        fs, signal = gen_multi_tone()
+    elif source == "Demo: Noisy Sine Wave":
+        fs, signal = gen_noisy_sine()
+    elif source == "Demo: Square Wave":
+        fs, signal = gen_square()
+    elif source == "Demo: Triangle Wave":
+        fs, signal = gen_triangle()
+    elif source == "Demo: Sawtooth Wave":
+        fs, signal = gen_sawtooth()
+    elif source == "Demo: Chirp Signal":
+        fs, signal = gen_chirp()
+    elif source == "Demo: White Noise":
+        fs, signal = gen_white_noise()
+    elif source == "Demo: Impulse (Delta) Signal":
+        fs, signal = gen_impulse()
+    elif source == "Demo: Step Signal":
+        fs, signal = gen_step()
 
-    st.download_button(
-        label=f"🎵 Download Filtered Audio ({audio_format.upper()})", data=audio_data,
-        file_name=f"filtered_audio.{audio_format}", mime=audio_mime
+    st.sidebar.success(f"{fs:.1f} Hz  |  {len(signal) / fs:.2f} sec  |  {len(signal)} samples")
+
+    full_signal = signal
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("2. Trim Signal (Optional)")
+    full_duration = float(len(full_signal) / fs)
+    trim_start, trim_end = st.sidebar.slider(
+        "Select time range (seconds)", min_value=0.0, max_value=full_duration, value=(0.0, full_duration)
     )
+
+    if trim_end > trim_start:
+        start_sample = int(trim_start * fs)
+        end_sample = int(trim_end * fs)
+        signal = full_signal[start_sample:end_sample]
+        st.sidebar.caption(f"✂️ Analyzing: {len(signal)} samples ({len(signal)/fs:.2f}s)")
+    else:
+        st.sidebar.error("Start time must be strictly before end time.")
+        st.stop()
+
+    st.sidebar.markdown("---")
+    st.sidebar.header("3. Export Settings")
+    graph_format = st.sidebar.selectbox("Graph Format", ["PNG", "PDF", "SVG"]).lower()
+    audio_format = st.sidebar.selectbox("Audio Format", ["WAV", "MP3", "FLAC"]).lower()
+
+    graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
+    audio_mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}.get(audio_format, f"audio/{audio_format}")
+
+    st.header("Signal Metrics & Statistics")
+    peak_to_peak = float(np.max(signal) - np.min(signal))
+    rms = float(np.sqrt(np.mean(np.square(signal))))
+    peak_abs = float(np.max(np.abs(signal)))
+    crest_factor = (peak_abs / rms) if rms > 0 else 0.0
+    mean_val = float(np.mean(signal))
+    variance_val = float(np.var(signal))
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Peak-to-Peak Amplitude", f"{peak_to_peak:.4g}", help="Difference between the maximum and minimum values.")
+    m2.metric("RMS Power", f"{rms:.4g}", help="Root Mean Square - the effective amplitude of the signal.")
+    m3.metric("Crest Factor", f"{crest_factor:.4g}", help="Peak amplitude divided by RMS.")
+    m4.metric("Mean", f"{mean_val:.4g}", help="Average sample value (DC offset).")
+    m5.metric("Variance", f"{variance_val:.4g}", help="Average squared deviation from the mean.")
+
+    n = len(signal)
+    t = np.arange(n) / fs
+    freqs = np.fft.rfftfreq(n, 1 / fs)
+    magnitude = np.abs(np.fft.rfft(signal)) / n
+
+    st.header("Signal Analysis")
+    fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
+    axs1[0].plot(t + trim_start, signal, linewidth=0.7)
+    axs1[0].set_title("Waveform (Time Domain)")
+    axs1[0].set_xlabel("Time (s)"); axs1[0].set_ylabel("Amplitude")
+
+    axs1[1].plot(freqs, magnitude, linewidth=0.7)
+    axs1[1].set_title("Magnitude Spectrum (FFT)")
+    axs1[1].set_xlabel("Frequency (Hz)"); axs1[1].set_ylabel("Magnitude")
+    axs1[1].set_xlim(0, fs / 2)
+
+    # FIX 2: Guardrail - Only compute Spectrogram if we have enough data points
+    if n >= 256:
+        f_spec, t_spec, Sxx = spectrogram(signal, fs, nperseg=min(1024, n), noverlap=min(512, n // 2))
+        im = axs1[2].pcolormesh(t_spec + trim_start, f_spec, 10 * np.log10(Sxx + 1e-12), shading="gouraud")
+        axs1[2].set_title("Spectrogram")
+        axs1[2].set_xlabel("Time (s)")
+        axs1[2].set_ylabel("Frequency (Hz)")
+        fig1.colorbar(im, ax=axs1[2], label="dB")
+    else:
+        axs1[2].text(0.5, 0.5, "Not enough data for Spectrogram", ha='center', va='center', fontsize=12)
+        axs1[2].set_axis_off()
+
+    plt.tight_layout()
+    st.pyplot(fig1)
+
+    buf1 = io.BytesIO()
+    fig1.savefig(buf1, format=graph_format)
+    st.download_button(
+        label=f"📥 Download Analysis Graph ({graph_format.upper()})", data=buf1.getvalue(),
+        file_name=f"signal_analysis.{graph_format}", mime=graph_mime
+    )
+    plt.close(fig1)
+
+    st.header("Filter Design")
+    c1, c2, c3 = st.columns(3)
+    family = c1.selectbox("Family", ["FIR", "IIR"])
+    ftype = c2.selectbox("Filter type", ["lowpass", "highpass", "bandpass", "notch"])
+
+    window_type = "hamming"
+    iir_order = 4
+    if family == "FIR":
+        window_type = c3.selectbox("Window Function", ["hamming", "hann", "blackman", "bartlett", "boxcar"])
+    else:
+        iir_order = c3.number_input("Filter Order", min_value=1, max_value=12, value=4, step=1)
+
+    nyq = fs / 2
+    smax = round(nyq * 0.98, 1)
+    if smax < 1.0:
+        st.error("Sample rate is too low to design a filter here. Check the detected/entered sample rate.")
+        st.stop()
+    cutoff = st.slider("Cutoff (Hz)", min_value=1.0, max_value=float(smax), value=float(min(200.0, smax * 0.2)))
+    cutoff2 = None
+    needs_band = ftype in ("bandpass", "notch")
+    if needs_band:
+        cutoff2 = st.slider("Cutoff2 (Hz)", min_value=1.0, max_value=float(smax), value=float(min(1500.0, smax * 0.5)))
+        if cutoff2 <= cutoff:
+            st.error(f"Cutoff2 ({cutoff2:.0f} Hz) must be greater than Cutoff ({cutoff:.0f} Hz).")
+            st.stop()
+
+    if family == "FIR":
+        b, a = design_fir(ftype, fs, cutoff, cutoff2, window=window_type)
+    else:
+        b, a = design_iir(ftype, fs, cutoff, cutoff2, order=iir_order)
+
+    # Extract Poles and check for IIR stability explicitly
+    z, p, k = tf2zpk(b, a)
+    if len(p) > 0 and np.any(np.abs(p) >= 1.0):
+        st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode. Please reduce the Filter Order or adjust the Cutoff frequency.")
+        st.stop()  # <--- THIS PREVENTS THE CRASH
+
+    try:
+        filtered = apply_filter(b, a, signal)
+    except Exception as e:
+        st.error(f"Filtering failed (likely due to instability): {e}")
+        st.stop()
+
+    freqs_f = np.fft.rfftfreq(len(filtered), 1 / fs)
+    mag_f = np.abs(np.fft.rfft(filtered)) / len(filtered)
+    w, h = freqz(b, a, worN=2048, fs=fs)
+
+    title = f"{family} {ftype}  cutoff={cutoff:.0f}Hz" + (f", {cutoff2:.0f}Hz" if needs_band else "")
+
+    fig2, axs2 = plt.subplots(4, 1, figsize=(10, 12))
+    axs2[0].plot(t + trim_start, signal, label="Original", alpha=0.6)
+    axs2[0].plot(t + trim_start, filtered, label="Filtered", alpha=0.8)
+    axs2[0].set_title(title + " - Waveform")
+    axs2[0].set_xlabel("Time (s)"); axs2[0].legend()
+
+    axs2[1].plot(freqs, magnitude, label="Original", alpha=0.6)
+    axs2[1].plot(freqs_f, mag_f, label="Filtered", alpha=0.8)
+    axs2[1].set_title("Spectrum Comparison")
+    axs2[1].set_xlabel("Frequency (Hz)"); axs2[1].set_xlim(0, fs / 2); axs2[1].legend()
+
+    # FIX 3: Use 20*log10 for standard Amplitude dB, not 40
+    axs2[2].plot(w, 20 * np.log10(np.abs(h) + 1e-12))
+    axs2[2].set_title(f"{family} {ftype} Effective Frequency Response")
+    axs2[2].set_xlabel("Frequency (Hz)"); axs2[2].set_xlim(0, fs / 2); axs2[2].grid(alpha=0.3)
+
+    axs2[3].add_patch(plt.Circle((0, 0), 1, color='black', fill=False, linestyle='--', alpha=0.5, label='Unit Circle'))
+
+    # FIX 4: Protect the Zeros array from throwing empty array errors
+    if len(z) > 0:
+        axs2[3].scatter(np.real(z), np.imag(z), marker='o', edgecolors='b', facecolors='none', label='Zeros (O)')
+    if len(p) > 0:
+        axs2[3].scatter(np.real(p), np.imag(p), marker='x', color='r', label='Poles (X)')
+    axs2[3].axhline(0, color='gray', alpha=0.3)
+    axs2[3].axvline(0, color='gray', alpha=0.3)
+    axs2[3].set_title("Filter Stability: Pole-Zero Plot (Z-Plane)")
+    axs2[3].set_xlabel("Real Axis"); axs2[3].set_ylabel("Imaginary Axis")
+    axs2[3].axis('equal') 
+    axs2[3].legend(loc='upper right')
+
+    plt.tight_layout()
+    st.pyplot(fig2)
+
+    buf2 = io.BytesIO()
+    fig2.savefig(buf2, format=graph_format)
+    st.download_button(
+        label=f"📥 Download Filter Graph ({graph_format.upper()})", data=buf2.getvalue(),
+        file_name=f"filter_comparison.{graph_format}", mime=graph_mime
+    )
+    plt.close(fig2)
+
+    st.header("Listen")
+
+    # Global Normalization (Prevents trimmed volume discrepancies)
+    global_peak = max(np.max(np.abs(full_signal)), np.max(np.abs(filtered)), 1e-9)
+
+    full_play_int = np.int16((full_signal / global_peak) * 32767)
+    filt_play_int = np.int16((filtered / global_peak) * 32767)
+
+    ac1, ac2 = st.columns(2)
+    with ac1:
+        st.caption("Original (Full File)")
+        st.audio(full_play_int, sample_rate=int(fs))
+    with ac2:
+        st.caption(f"Filtered & Trimmed ({title})")
+        st.audio(filt_play_int, sample_rate=int(fs))
+
+        if audio_format == "wav":
+            wav_buf = io.BytesIO()
+            wavfile.write(wav_buf, int(fs), filt_play_int)
+            audio_data = wav_buf.getvalue()
+        else:
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_wav:
+                wavfile.write(tmp_wav.name, int(fs), filt_play_int)
+                tmp_out = tmp_wav.name.replace('.wav', f'.{audio_format}')
+                try:
+                    result = subprocess.run(['ffmpeg', '-y', '-i', tmp_wav.name, tmp_out], capture_output=True, text=True)
+                except FileNotFoundError:
+                    os.remove(tmp_wav.name)
+                    st.error("ffmpeg is not installed. Choose WAV instead.")
+                    st.stop()
+                if result.returncode != 0 or not os.path.exists(tmp_out):
+                    os.remove(tmp_wav.name)
+                    st.error(f"Encoding failed: {result.stderr.strip()[-500:]}")
+                    st.stop()
+                with open(tmp_out, 'rb') as f_out:
+                    audio_data = f_out.read()
+                os.remove(tmp_wav.name)
+                os.remove(tmp_out)
+
+        st.download_button(
+            label=f"🎵 Download Filtered Audio ({audio_format.upper()})", data=audio_data,
+            file_name=f"filtered_audio.{audio_format}", mime=audio_mime
+        )
