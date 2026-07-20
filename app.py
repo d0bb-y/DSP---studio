@@ -112,16 +112,14 @@ def generate_real_audio_demo():
     
     if not os.path.exists(tmp_path):
         try:
-            # 3-second timeout to prevent app hanging
             req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, timeout=3.0) as response, open(tmp_path, 'wb') as out_file:
                 out_file.write(response.read())
             return load_wav_signal(tmp_path)
         except Exception:
-            # DEPENDENCY FALLBACK: Mathematically synthesize a human-like vowel sound (/a/)
             fs = 8000
             t = np.linspace(0, 3.0, int(fs * 3.0), endpoint=False)
-            source = sawtooth(2 * np.pi * 120 * t) # Glottal pitch (120 Hz male)
+            source = sawtooth(2 * np.pi * 120 * t)
             b1, a1 = butter(2, [600/(fs/2), 800/(fs/2)], btype='bandpass')
             b2, a2 = butter(2, [1000/(fs/2), 1200/(fs/2)], btype='bandpass')
             b3, a3 = butter(2, [2300/(fs/2), 2700/(fs/2)], btype='bandpass')
@@ -191,7 +189,6 @@ def gen_step(duration=3.0, fs=8000):
     sig = np.zeros(int(fs * duration))
     sig[len(sig)//2:] = 1.0
     return fs, sig.astype(np.float32)
-# ----------------------------------------------
 
 def _ensure_package(pkg_name, import_name=None):
     import_name = import_name or pkg_name
@@ -219,8 +216,7 @@ def convert_audio_to_wav(input_path, output_path=None):
             capture_output=True, text=True
         )
     except FileNotFoundError:
-        raise RuntimeError(
-            "ffmpeg is not installed (or not on PATH) in this environment. Upload a .wav file instead.")
+        raise RuntimeError("ffmpeg is not installed. Upload a .wav file instead.")
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg couldn't convert {input_path}:\n{result.stderr.strip()[-500:]}")
     return output_path
@@ -325,25 +321,39 @@ def apply_filter(b, a, signal):
     st.warning(f"Signal too short for zero-phase filtering (needs > {padlen} samples) - using standard filtering.")
     return lfilter(b, a, signal)
 
+
 # ============================================================================
-# 2D IMAGE DSP ENGINE - pure functions, no Streamlit-specific code
-# Uses ONLY scipy.ndimage + numpy + Pillow (no OpenCV / other heavy deps)
+# 2D IMAGE DSP ENGINE - pure functions
 # ============================================================================
 
 @st.cache_data(show_spinner=False)
 def load_image_array(image_bytes):
-    """
-    Decode uploaded image bytes into a standardized numpy array.
-    """
     pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     return np.array(pil_image)
 
+@st.cache_data(show_spinner=False)
+def gen_zone_plate(size=512):
+    """Generates a 2D mathematical Zone Plate (concentric rings), standard DSP test image."""
+    x = np.linspace(-1, 1, size)
+    y = np.linspace(-1, 1, size)
+    X, Y = np.meshgrid(x, y)
+    R = X**2 + Y**2
+    Z = np.sin(50 * R * np.pi)
+    Z = ((Z + 1) * 127.5).astype(np.uint8)
+    return np.stack([Z, Z, Z], axis=-1)
+
+@st.cache_data(show_spinner=False)
+def gen_2d_grating(size=512):
+    """Generates a 2D Spatial Grating pattern."""
+    x = np.linspace(-1, 1, size)
+    y = np.linspace(-1, 1, size)
+    X, Y = np.meshgrid(x, y)
+    Z = np.sin(20 * np.pi * X) + np.cos(20 * np.pi * Y)
+    Z = ((Z / 2 + 0.5) * 255).astype(np.uint8)
+    return np.stack([Z, Z, Z], axis=-1)
+
 @st.cache_data(show_spinner="Detecting edges...")
 def apply_sobel_edge_detection(image_array):
-    """
-    Sobel edge detection. Computes the gradient along the column/x axis (Gx) 
-    and along the row/y axis (Gy), combining them into a single magnitude map.
-    """
     grayscale = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
     gx = ndimage.sobel(grayscale, axis=1, mode="reflect")
     gy = ndimage.sobel(grayscale, axis=0, mode="reflect")
@@ -355,9 +365,6 @@ def apply_sobel_edge_detection(image_array):
 
 @st.cache_data(show_spinner="Applying Gaussian blur...")
 def apply_gaussian_blur(image_array, sigma):
-    """
-    Gaussian blur = a 2D lowpass filter.
-    """
     blurred = ndimage.gaussian_filter(
         image_array.astype(np.float64), sigma=(sigma, sigma, 0), mode="reflect"
     )
@@ -365,9 +372,6 @@ def apply_gaussian_blur(image_array, sigma):
 
 @st.cache_data(show_spinner="Sharpening...")
 def apply_sharpening(image_array):
-    """
-    Image sharpening via a 2D convolution highpass spatial filter (unsharp masking).
-    """
     sharpen_kernel = np.array([
         [ 0, -1,  0],
         [-1,  5, -1],
@@ -519,7 +523,6 @@ if app_mode == "📈 1D Signal Studio":
         fs, signal = gen_step()
 
     st.sidebar.success(f"{fs:.1f} Hz  |  {len(signal) / fs:.2f} sec  |  {len(signal)} samples")
-
     full_signal = signal
 
     st.sidebar.markdown("---")
@@ -538,7 +541,6 @@ if app_mode == "📈 1D Signal Studio":
         st.sidebar.error("Start time must be strictly before end time.")
         st.stop()
 
-    # FIX: Converted from selectbox to horizontal radio to prevent scrolling cut-off bug in Streamlit sidebar
     st.sidebar.markdown("---")
     st.sidebar.header("3. Export Settings")
     graph_format = st.sidebar.radio("Graph Format", ["PNG", "PDF", "SVG"], horizontal=True).lower()
@@ -556,17 +558,16 @@ if app_mode == "📈 1D Signal Studio":
     variance_val = float(np.var(signal))
 
     m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Peak-to-Peak Amplitude", f"{peak_to_peak:.4g}", help="Difference between the maximum and minimum values.")
-    m2.metric("RMS Power", f"{rms:.4g}", help="Root Mean Square - the effective amplitude of the signal.")
-    m3.metric("Crest Factor", f"{crest_factor:.4g}", help="Peak amplitude divided by RMS.")
-    m4.metric("Mean", f"{mean_val:.4g}", help="Average sample value (DC offset).")
-    m5.metric("Variance", f"{variance_val:.4g}", help="Average squared deviation from the mean.")
+    m1.metric("Peak-to-Peak Amplitude", f"{peak_to_peak:.4g}")
+    m2.metric("RMS Power", f"{rms:.4g}")
+    m3.metric("Crest Factor", f"{crest_factor:.4g}")
+    m4.metric("Mean", f"{mean_val:.4g}")
+    m5.metric("Variance", f"{variance_val:.4g}")
 
     n = len(signal)
     t = np.arange(n) / fs
     freqs = np.fft.rfftfreq(n, 1 / fs)
     
-    # FIX: Bypass 1/N scaling for the Impulse to match textbook DSP theory (= 1)
     if source == "Demo: Impulse (Delta) Signal":
         magnitude = np.abs(np.fft.rfft(signal))
     else:
@@ -636,21 +637,19 @@ if app_mode == "📈 1D Signal Studio":
     else:
         b, a = design_iir(ftype, fs, cutoff, cutoff2, order=iir_order)
 
-    # Extract Poles and check for IIR stability explicitly
     z, p, k = tf2zpk(b, a)
     
-    # Force trivial poles to appear at the origin for FIR filters
     if family == "FIR" and len(z) > 0:
         p = np.zeros(len(z))
 
     if len(p) > 0 and np.any(np.abs(p) >= 1.0):
-        st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode. Please reduce the Filter Order or adjust the Cutoff frequency.")
+        st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode.")
         st.stop()  
 
     try:
         filtered = apply_filter(b, a, signal)
     except Exception as e:
-        st.error(f"Filtering failed (likely due to instability): {e}")
+        st.error(f"Filtering failed: {e}")
         st.stop()
 
     freqs_f = np.fft.rfftfreq(len(filtered), 1 / fs)
@@ -753,86 +752,136 @@ elif app_mode == "🖼️ 2D Image Studio":
     
     st.header("🖼️ 2D Image Studio")
     st.caption(
-        "Upload an image to explore 2D spatial-domain DSP: edge detection, "
-        "Gaussian (lowpass) blurring, and convolution-based sharpening - "
-        "implemented with scipy.ndimage + numpy + Pillow only, no OpenCV."
+        "Explore 2D spatial-domain DSP: edge detection, Gaussian (lowpass) blurring, "
+        "and convolution-based sharpening - implemented purely with scipy.ndimage."
     )
 
-    # FIX: Moved file uploader to sidebar to match 1D layout
     st.sidebar.header("1. Image Source")
-    uploaded_image = st.sidebar.file_uploader(
-        "Upload an image (PNG, JPG, JPEG)",
-        type=["png", "jpg", "jpeg"],
-        key="image_2d_uploader",
+    
+    source_2d = st.sidebar.selectbox(
+        "Source", 
+        ["Upload a file", "Demo: 2D Zone Plate (Chirp)", "Demo: 2D Spatial Grating"]
     )
 
-    if uploaded_image is None:
-        st.info("Upload a PNG/JPG/JPEG image in the sidebar to get started.")
-    else:
-        try:
-            image_bytes = uploaded_image.getvalue()
-            original_array = load_image_array(image_bytes)
-        except Exception as e:
-            st.error(f"Couldn't read this image: {e}")
+    original_array = None
+
+    if source_2d == "Upload a file":
+        with st.sidebar.popover("ℹ️ View Supported File Types", use_container_width=True):
+            st.markdown(
+                """
+                <div style="display: flex; gap: 40px;">
+                    <div>
+                        <h3 style="margin: 0px 0px 10px 0px;">Image Formats</h3>
+                        <ul style="margin: 0; padding-left: 20px;">
+                            <li>png</li><li>jpg</li><li>jpeg</li>
+                            <li>bmp</li><li>webp</li><li>tiff</li>
+                        </ul>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            
+        st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
+        uploaded_image = st.sidebar.file_uploader(
+            "hidden_label",
+            label_visibility="collapsed",
+            type=["png", "jpg", "jpeg", "bmp", "webp", "tiff"],
+            key="image_2d_uploader"
+        )
+
+        if uploaded_image is not None:
+            try:
+                image_bytes = uploaded_image.getvalue()
+                original_array = load_image_array(image_bytes)
+            except Exception as e:
+                st.sidebar.error(f"Couldn't read this image: {e}")
+                st.stop()
         else:
-            pil_original = Image.fromarray(original_array)
+            st.info("Upload an image in the sidebar, or pick a mathematical demo source to test 2D DSP.")
+            st.stop()
             
-            # FIX: Moved DSP operations and parameters to sidebar for clean UI consistency
-            st.sidebar.markdown("---")
-            st.sidebar.header("2. DSP Operations")
-            operation = st.sidebar.selectbox(
-                "2D DSP Operation",
-                ["Sobel Edge Detection", "Gaussian Blur", "Image Sharpening"],
-                key="image_2d_operation",
-                help="Sobel = highpass edge/gradient detector. Gaussian Blur "
-                     "= lowpass filter. Sharpening = highpass convolution.",
+    elif source_2d == "Demo: 2D Zone Plate (Chirp)":
+        original_array = gen_zone_plate()
+    elif source_2d == "Demo: 2D Spatial Grating":
+        original_array = gen_2d_grating()
+
+    # If we successfully loaded or generated an image, proceed
+    if original_array is not None:
+        pil_original = Image.fromarray(original_array)
+        
+        st.sidebar.markdown("---")
+        st.sidebar.header("2. DSP Operations")
+        operation = st.sidebar.selectbox(
+            "2D DSP Operation",
+            ["Sobel Edge Detection", "Gaussian Blur", "Image Sharpening"],
+            key="image_2d_operation",
+            help="Sobel = highpass edge/gradient detector. Gaussian Blur "
+                 "= lowpass filter. Sharpening = highpass convolution.",
+        )
+
+        sigma = 2.0
+        if operation == "Gaussian Blur":
+            sigma = st.sidebar.slider(
+                "Sigma (blur strength)",
+                min_value=0.1, max_value=10.0, value=2.0, step=0.1,
+                key="image_2d_sigma",
+                help="Standard deviation of the Gaussian kernel, in pixels.",
             )
 
-            sigma = 2.0
-            if operation == "Gaussian Blur":
-                sigma = st.sidebar.slider(
-                    "Sigma (blur strength)",
-                    min_value=0.1, max_value=10.0, value=2.0, step=0.1,
-                    key="image_2d_sigma",
-                    help="Standard deviation of the Gaussian kernel, in "
-                         "pixels. Higher sigma = stronger lowpass effect.",
-                )
+        st.sidebar.markdown("---")
+        st.sidebar.header("3. Export Settings")
+        
+        # New Export settings to perfectly match the 1D UI
+        image_format = st.sidebar.radio(
+            "Export Format", 
+            ["PNG", "JPG", "BMP"], 
+            horizontal=True
+        ).lower()
+        
+        # PIL uses 'JPEG' instead of 'JPG' for saving
+        pil_format = "JPEG" if image_format == "jpg" else image_format.upper()
+        mime_format = f"image/{'jpeg' if image_format == 'jpg' else image_format}"
 
-            # Execution happens here in the main body based on sidebar inputs
-            if operation == "Sobel Edge Detection":
-                filtered_array = apply_sobel_edge_detection(original_array)
-                result_caption = "Gradient magnitude: sqrt(Gx^2 + Gy^2)"
-            elif operation == "Gaussian Blur":
-                filtered_array = apply_gaussian_blur(original_array, sigma)
-                result_caption = f"Lowpass filter, sigma = {sigma}"
-            else:  
-                filtered_array = apply_sharpening(original_array)
-                result_caption = "Highpass 3x3 convolution kernel"
+        # Execute 2D logic
+        if operation == "Sobel Edge Detection":
+            filtered_array = apply_sobel_edge_detection(original_array)
+            result_caption = "Gradient magnitude: sqrt(Gx^2 + Gy^2)"
+        elif operation == "Gaussian Blur":
+            filtered_array = apply_gaussian_blur(original_array, sigma)
+            result_caption = f"Lowpass filter, sigma = {sigma}"
+        else:  
+            filtered_array = apply_sharpening(original_array)
+            result_caption = "Highpass 3x3 convolution kernel"
 
-            pil_filtered = Image.fromarray(filtered_array)
+        pil_filtered = Image.fromarray(filtered_array)
 
-            img_col1, img_col2 = st.columns(2)
-            with img_col1:
-                st.subheader("Original")
-                st.image(pil_original, width="stretch")
-            with img_col2:
-                st.subheader(operation)
-                st.caption(result_caption)
-                st.image(pil_filtered, width="stretch")
+        # Main UI display logic (Vertically stacked, not side-by-side)
+        st.subheader("Original Image")
+        st.image(pil_original, use_container_width=True)
 
-            operation_slugs = {
-                "Sobel Edge Detection": "sobel_edges",
-                "Gaussian Blur": "gaussian_blur",
-                "Image Sharpening": "sharpened",
-            }
-            download_buf = io.BytesIO()
-            pil_filtered.save(download_buf, format="PNG")
-            
-            st.markdown("---")
-            st.download_button(
-                label="📥 Download Filtered Image (PNG)",
-                data=download_buf.getvalue(),
-                file_name=f"filtered_{operation_slugs[operation]}.png",
-                mime="image/png",
-                key="image_2d_download",
-            )
+        st.markdown("---")
+        
+        st.subheader(f"Filtered Result: {operation}")
+        st.caption(result_caption)
+        st.image(pil_filtered, use_container_width=True)
+
+        # Setup custom naming based on operation
+        operation_slugs = {
+            "Sobel Edge Detection": "sobel_edges",
+            "Gaussian Blur": "gaussian_blur",
+            "Image Sharpening": "sharpened",
+        }
+        
+        # Download logic tailored to the sidebar settings
+        download_buf = io.BytesIO()
+        pil_filtered.save(download_buf, format=pil_format)
+        
+        st.markdown("---")
+        st.download_button(
+            label=f"📥 Download Filtered Image ({image_format.upper()})",
+            data=download_buf.getvalue(),
+            file_name=f"filtered_{operation_slugs[operation]}.{image_format}",
+            mime=mime_format,
+            key="image_2d_download",
+        )
