@@ -323,7 +323,7 @@ def apply_filter(b, a, signal):
 
 
 # ============================================================================
-# 2D IMAGE DSP ENGINE - pure functions
+# 2D IMAGE DSP ENGINE - Pure numpy/scipy implementations (No OpenCV)
 # ============================================================================
 
 @st.cache_data(show_spinner=False)
@@ -384,6 +384,39 @@ def apply_sharpening(image_array):
         )
     return np.clip(sharpened, 0, 255).astype(np.uint8)
 
+@st.cache_data(show_spinner="Computing 2D FFT...")
+def apply_fft2d(image_array):
+    """Computes the 2D Spatial Frequency Spectrum (Magnitude) of the image."""
+    gray = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
+    f = np.fft.fft2(gray)
+    fshift = np.fft.fftshift(f)
+    magnitude_spectrum = 20 * np.log10(np.abs(fshift) + 1e-8)
+    # Normalize to 0-255 for clean visual display
+    norm_mag = ((magnitude_spectrum - magnitude_spectrum.min()) / (magnitude_spectrum.max() - magnitude_spectrum.min()) * 255)
+    return norm_mag.astype(np.uint8)
+
+@st.cache_data(show_spinner="Applying Median Filter...")
+def apply_median_filter(image_array, size):
+    """Non-linear spatial filter for denoising (salt-and-pepper) while keeping edges."""
+    return ndimage.median_filter(image_array, size=(size, size, 1))
+
+@st.cache_data(show_spinner="Applying Thresholding...")
+def apply_binarization(image_array, threshold):
+    """Converts image to pure black and white (Binary) based on a threshold."""
+    gray = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
+    bw = (gray > threshold).astype(np.uint8) * 255
+    return np.stack([bw, bw, bw], axis=-1)
+
+@st.cache_data(show_spinner="Applying Erosion...")
+def apply_erosion(image_array, size):
+    """Morphological minimum filter (Shrinks bright shapes)."""
+    return ndimage.grey_erosion(image_array, size=(size, size, 1))
+
+@st.cache_data(show_spinner="Applying Dilation...")
+def apply_dilation(image_array, size):
+    """Morphological maximum filter (Expands bright shapes)."""
+    return ndimage.grey_dilation(image_array, size=(size, size, 1))
+
 
 # ============================================================================
 # WEB UI
@@ -391,7 +424,6 @@ def apply_sharpening(image_array):
 
 st.title("Universal DSP Signal Analyzer & Filter Design Studio")
 
-# --- USING SELECTBOX FOR AUTO-CLOSING COMPACT MENU ---
 app_mode = st.sidebar.selectbox(
     "🎛️ Select Studio Mode",
     ["📈 1D Signal Studio", "🖼️ 2D Image Studio"]
@@ -544,7 +576,6 @@ if app_mode == "📈 1D Signal Studio":
     st.sidebar.markdown("---")
     st.sidebar.header("3. Export Settings")
     
-    # USING SELECTBOX FOR AUTO-CLOSING EXPORT MENUS
     graph_format = st.sidebar.selectbox("Graph Format", ["PNG", "PDF", "SVG"]).lower()
     audio_format = st.sidebar.selectbox("Audio Format", ["WAV", "MP3", "FLAC"]).lower()
 
@@ -752,8 +783,6 @@ if app_mode == "📈 1D Signal Studio":
 # ============================================================================
 elif app_mode == "🖼️ 2D Image Studio":
     
-    # REMOVED the extra headers and captions so 2D perfectly matches the clean 1D screen
-    
     st.sidebar.header("1. Image Source")
     
     source_2d = st.sidebar.selectbox(
@@ -809,41 +838,74 @@ elif app_mode == "🖼️ 2D Image Studio":
         
         st.sidebar.markdown("---")
         st.sidebar.header("2. DSP Operations")
+        
+        # New Advanced 2D Features Added Here!
         operation = st.sidebar.selectbox(
             "2D DSP Operation",
-            ["Sobel Edge Detection", "Gaussian Blur", "Image Sharpening"],
-            key="image_2d_operation",
-            help="Sobel = highpass edge/gradient detector. Gaussian Blur "
-                 "= lowpass filter. Sharpening = highpass convolution.",
+            [
+                "Sobel Edge Detection", 
+                "Gaussian Blur", 
+                "Image Sharpening",
+                "2D FFT (Frequency Spectrum)",
+                "Median Filtering",
+                "Image Binarization (Threshold)",
+                "Morphological Erosion",
+                "Morphological Dilation"
+            ],
+            key="image_2d_operation"
         )
 
+        # Dynamic parameter controls based on the selected operation
         sigma = 2.0
+        kernel_size = 3
+        threshold = 128
+
         if operation == "Gaussian Blur":
-            sigma = st.sidebar.slider(
-                "Sigma (blur strength)",
-                min_value=0.1, max_value=10.0, value=2.0, step=0.1,
-                key="image_2d_sigma",
-                help="Standard deviation of the Gaussian kernel, in pixels.",
-            )
+            sigma = st.sidebar.slider("Sigma (blur strength)", 0.1, 10.0, 2.0, 0.1)
+        elif operation in ["Median Filtering", "Morphological Erosion", "Morphological Dilation"]:
+            kernel_size = st.sidebar.slider("Kernel Size (pixels)", min_value=3, max_value=21, value=5, step=2)
+        elif operation == "Image Binarization (Threshold)":
+            threshold = st.sidebar.slider("Threshold Level", 0, 255, 128, 1)
 
         st.sidebar.markdown("---")
         st.sidebar.header("3. Export Settings")
-        
-        # USING SELECTBOX FOR AUTO-CLOSING EXPORT MENUS
         image_format = st.sidebar.selectbox("Export Format", ["PNG", "JPG", "BMP"]).lower()
         
         pil_format = "JPEG" if image_format == "jpg" else image_format.upper()
         mime_format = f"image/{'jpeg' if image_format == 'jpg' else image_format}"
 
+        # Execute 2D logic
         if operation == "Sobel Edge Detection":
             filtered_array = apply_sobel_edge_detection(original_array)
             result_caption = "Gradient magnitude: sqrt(Gx^2 + Gy^2)"
+            
         elif operation == "Gaussian Blur":
             filtered_array = apply_gaussian_blur(original_array, sigma)
             result_caption = f"Lowpass filter, sigma = {sigma}"
-        else:  
+            
+        elif operation == "Image Sharpening":  
             filtered_array = apply_sharpening(original_array)
             result_caption = "Highpass 3x3 convolution kernel"
+            
+        elif operation == "2D FFT (Frequency Spectrum)":
+            filtered_array = apply_fft2d(original_array)
+            result_caption = "2D Magnitude Spectrum (Log Scale) shifted to center"
+            
+        elif operation == "Median Filtering":
+            filtered_array = apply_median_filter(original_array, kernel_size)
+            result_caption = f"Median Filter (Non-linear Denoising), {kernel_size}x{kernel_size} footprint"
+            
+        elif operation == "Image Binarization (Threshold)":
+            filtered_array = apply_binarization(original_array, threshold)
+            result_caption = f"Binarized (Threshold > {threshold})"
+            
+        elif operation == "Morphological Erosion":
+            filtered_array = apply_erosion(original_array, kernel_size)
+            result_caption = f"Erosion (Local Minimum), {kernel_size}x{kernel_size} footprint"
+            
+        elif operation == "Morphological Dilation":
+            filtered_array = apply_dilation(original_array, kernel_size)
+            result_caption = f"Dilation (Local Maximum), {kernel_size}x{kernel_size} footprint"
 
         pil_filtered = Image.fromarray(filtered_array)
 
@@ -854,12 +916,22 @@ elif app_mode == "🖼️ 2D Image Studio":
         
         st.subheader(f"Filtered Result: {operation}")
         st.caption(result_caption)
-        st.image(pil_filtered, use_container_width=True)
+        
+        # Display the FFT output properly since it calculates a grayscale magnitude map
+        if operation == "2D FFT (Frequency Spectrum)":
+            st.image(pil_filtered, use_container_width=True, clamp=True)
+        else:
+            st.image(pil_filtered, use_container_width=True)
 
         operation_slugs = {
             "Sobel Edge Detection": "sobel_edges",
             "Gaussian Blur": "gaussian_blur",
             "Image Sharpening": "sharpened",
+            "2D FFT (Frequency Spectrum)": "fft2d",
+            "Median Filtering": "median",
+            "Image Binarization (Threshold)": "binary",
+            "Morphological Erosion": "erosion",
+            "Morphological Dilation": "dilation"
         }
         
         download_buf = io.BytesIO()
