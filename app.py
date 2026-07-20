@@ -391,13 +391,11 @@ def apply_sharpening(image_array):
 
 st.title("Universal DSP Signal Analyzer & Filter Design Studio")
 
-# --- MASTER APP MODE SELECTOR (POPOVER) ---
-with st.sidebar.popover("🎛️ Select Studio Mode", use_container_width=True):
-    app_mode = st.radio(
-        "Studio Mode",
-        ["📈 1D Signal Studio", "🖼️ 2D Image Studio"],
-        label_visibility="collapsed"
-    )
+# --- USING SELECTBOX FOR AUTO-CLOSING COMPACT MENU ---
+app_mode = st.sidebar.selectbox(
+    "🎛️ Select Studio Mode",
+    ["📈 1D Signal Studio", "🖼️ 2D Image Studio"]
+)
 st.sidebar.markdown("---")
 
 # ============================================================================
@@ -546,10 +544,9 @@ if app_mode == "📈 1D Signal Studio":
     st.sidebar.markdown("---")
     st.sidebar.header("3. Export Settings")
     
-    # 1D EXPORT POPOVER
-    with st.sidebar.popover("💾 Output Formats", use_container_width=True):
-        graph_format = st.radio("Graph Format", ["PNG", "PDF", "SVG"], horizontal=True).lower()
-        audio_format = st.radio("Audio Format", ["WAV", "MP3", "FLAC"], horizontal=True).lower()
+    # USING SELECTBOX FOR AUTO-CLOSING EXPORT MENUS
+    graph_format = st.sidebar.selectbox("Graph Format", ["PNG", "PDF", "SVG"]).lower()
+    audio_format = st.sidebar.selectbox("Audio Format", ["WAV", "MP3", "FLAC"]).lower()
 
     graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
     audio_mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}.get(audio_format, f"audio/{audio_format}")
@@ -755,12 +752,8 @@ if app_mode == "📈 1D Signal Studio":
 # ============================================================================
 elif app_mode == "🖼️ 2D Image Studio":
     
-    st.header("🖼️ 2D Image Studio")
-    st.caption(
-        "Explore 2D spatial-domain DSP: edge detection, Gaussian (lowpass) blurring, "
-        "and convolution-based sharpening - implemented purely with scipy.ndimage."
-    )
-
+    # REMOVED the extra headers and captions so 2D perfectly matches the clean 1D screen
+    
     st.sidebar.header("1. Image Source")
     
     source_2d = st.sidebar.selectbox(
@@ -836,13 +829,8 @@ elif app_mode == "🖼️ 2D Image Studio":
         st.sidebar.markdown("---")
         st.sidebar.header("3. Export Settings")
         
-        # 2D EXPORT POPOVER
-        with st.sidebar.popover("💾 Output Format", use_container_width=True):
-            image_format = st.radio(
-                "Export Format", 
-                ["PNG", "JPG", "BMP"], 
-                horizontal=True
-            ).lower()
+        # USING SELECTBOX FOR AUTO-CLOSING EXPORT MENUS
+        image_format = st.sidebar.selectbox("Export Format", ["PNG", "JPG", "BMP"]).lower()
         
         pil_format = "JPEG" if image_format == "jpg" else image_format.upper()
         mime_format = f"image/{'jpeg' if image_format == 'jpg' else image_format}"
