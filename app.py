@@ -348,8 +348,8 @@ def gen_2d_grating(size=512):
     x = np.linspace(-1, 1, size)
     y = np.linspace(-1, 1, size)
     X, Y = np.meshgrid(x, y)
-    Z = np.sin(20 * np.pi * X) + np.cos(20 * np.pi * Y)
-    Z = ((Z / 2 + 0.5) * 255).astype(np.uint8)
+    Z = np.sin(20 * np.pi * X) + np.cos(20 * np.pi * Y)  # true range is [-2, 2]
+    Z = ((Z + 2) / 4 * 255).astype(np.uint8)
     return np.stack([Z, Z, Z], axis=-1)
 
 @st.cache_data(show_spinner="Detecting edges...")
@@ -391,7 +391,6 @@ def apply_fft2d(image_array):
     f = np.fft.fft2(gray)
     fshift = np.fft.fftshift(f)
     magnitude_spectrum = 20 * np.log10(np.abs(fshift) + 1e-8)
-    # Normalize to 0-255 for clean visual display
     norm_mag = ((magnitude_spectrum - magnitude_spectrum.min()) / (magnitude_spectrum.max() - magnitude_spectrum.min()) * 255)
     return norm_mag.astype(np.uint8)
 
