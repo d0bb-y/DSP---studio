@@ -391,11 +391,13 @@ def apply_sharpening(image_array):
 
 st.title("Universal DSP Signal Analyzer & Filter Design Studio")
 
-# --- MASTER APP MODE SELECTOR ---
-app_mode = st.sidebar.radio(
-    "Select Studio Mode",
-    ["📈 1D Signal Studio", "🖼️ 2D Image Studio"]
-)
+# --- MASTER APP MODE SELECTOR (POPOVER) ---
+with st.sidebar.popover("🎛️ Select Studio Mode", use_container_width=True):
+    app_mode = st.radio(
+        "Studio Mode",
+        ["📈 1D Signal Studio", "🖼️ 2D Image Studio"],
+        label_visibility="collapsed"
+    )
 st.sidebar.markdown("---")
 
 # ============================================================================
@@ -543,8 +545,11 @@ if app_mode == "📈 1D Signal Studio":
 
     st.sidebar.markdown("---")
     st.sidebar.header("3. Export Settings")
-    graph_format = st.sidebar.radio("Graph Format", ["PNG", "PDF", "SVG"], horizontal=True).lower()
-    audio_format = st.sidebar.radio("Audio Format", ["WAV", "MP3", "FLAC"], horizontal=True).lower()
+    
+    # 1D EXPORT POPOVER
+    with st.sidebar.popover("💾 Output Formats", use_container_width=True):
+        graph_format = st.radio("Graph Format", ["PNG", "PDF", "SVG"], horizontal=True).lower()
+        audio_format = st.radio("Audio Format", ["WAV", "MP3", "FLAC"], horizontal=True).lower()
 
     graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
     audio_mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}.get(audio_format, f"audio/{audio_format}")
@@ -806,7 +811,6 @@ elif app_mode == "🖼️ 2D Image Studio":
     elif source_2d == "Demo: 2D Spatial Grating":
         original_array = gen_2d_grating()
 
-    # If we successfully loaded or generated an image, proceed
     if original_array is not None:
         pil_original = Image.fromarray(original_array)
         
@@ -832,18 +836,17 @@ elif app_mode == "🖼️ 2D Image Studio":
         st.sidebar.markdown("---")
         st.sidebar.header("3. Export Settings")
         
-        # New Export settings to perfectly match the 1D UI
-        image_format = st.sidebar.radio(
-            "Export Format", 
-            ["PNG", "JPG", "BMP"], 
-            horizontal=True
-        ).lower()
+        # 2D EXPORT POPOVER
+        with st.sidebar.popover("💾 Output Format", use_container_width=True):
+            image_format = st.radio(
+                "Export Format", 
+                ["PNG", "JPG", "BMP"], 
+                horizontal=True
+            ).lower()
         
-        # PIL uses 'JPEG' instead of 'JPG' for saving
         pil_format = "JPEG" if image_format == "jpg" else image_format.upper()
         mime_format = f"image/{'jpeg' if image_format == 'jpg' else image_format}"
 
-        # Execute 2D logic
         if operation == "Sobel Edge Detection":
             filtered_array = apply_sobel_edge_detection(original_array)
             result_caption = "Gradient magnitude: sqrt(Gx^2 + Gy^2)"
@@ -856,7 +859,6 @@ elif app_mode == "🖼️ 2D Image Studio":
 
         pil_filtered = Image.fromarray(filtered_array)
 
-        # Main UI display logic (Vertically stacked, not side-by-side)
         st.subheader("Original Image")
         st.image(pil_original, use_container_width=True)
 
@@ -866,14 +868,12 @@ elif app_mode == "🖼️ 2D Image Studio":
         st.caption(result_caption)
         st.image(pil_filtered, use_container_width=True)
 
-        # Setup custom naming based on operation
         operation_slugs = {
             "Sobel Edge Detection": "sobel_edges",
             "Gaussian Blur": "gaussian_blur",
             "Image Sharpening": "sharpened",
         }
         
-        # Download logic tailored to the sidebar settings
         download_buf = io.BytesIO()
         pil_filtered.save(download_buf, format=pil_format)
         
