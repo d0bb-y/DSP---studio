@@ -26,14 +26,14 @@ from PIL import Image
 st.set_page_config(page_title="DSP Signal Analyzer", layout="wide")
 
 # ============================================================================
-# UI CLEANUP - Hide GitHub Icon and Streamlit Menu
+# UI CLEANUP - Hide GitHub Icon and Streamlit Menu (Keeping Sidebar Toggle!)
 # ============================================================================
 hide_st_style = """
     <style>
     #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
     footer {visibility: hidden;}
-    .st-emotion-cache-1wbqy5l {display: none;} /* Hides the fork button container */
+    /* Hides the top-right toolbar (GitHub, Fork, Deploy, Menu) but keeps the sidebar toggle */
+    [data-testid="stToolbar"] {display: none !important;}
     </style>
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
