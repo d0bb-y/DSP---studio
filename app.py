@@ -488,8 +488,6 @@ if app_mode == "📈 1D Signal Studio":
         "Demo: Step Signal"
     ]
     source = st.sidebar.selectbox("Source", source_options)
-    
-    st.sidebar.caption("Note: MP3, AAC, and FLAC files require FFmpeg to be installed on the host system.")
 
     fs = signal = None
 
@@ -645,7 +643,10 @@ if app_mode == "📈 1D Signal Studio":
     t = np.arange(n) / fs
     freqs = np.fft.rfftfreq(n, 1 / fs)
     
-    magnitude = np.abs(np.fft.rfft(signal)) / n
+    if source == "Demo: Impulse (Delta) Signal":
+        magnitude = np.abs(np.fft.rfft(signal))
+    else:
+        magnitude = np.abs(np.fft.rfft(signal)) / n
 
     st.header("Signal Analysis")
     fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
