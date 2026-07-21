@@ -26,7 +26,7 @@ from PIL import Image
 st.set_page_config(page_title="DSP Signal Analyzer", layout="wide")
 
 # ============================================================================
-# DSP ENGINE - identical to the notebook version, no Streamlit-specific code
+# DSP ENGINE - Pure Logic (No Streamlit UI inside these functions)
 # ============================================================================
 
 def _strip_comment(line):
@@ -63,26 +63,42 @@ def _header_skip_count(filename, delim):
             return n_seen
     return 0
 
-def _fill_nans(arr):
-    """Interpolates missing (NaN) values to prevent silent math failures."""
+def _fill_nans(arr, label="data"):
+    """Interpolates ISOLATED missing (NaN) values. Refuses to guess if too much
+    of the column is missing."""
     mask = np.isnan(arr)
-    if mask.all():
-        raise ValueError("File contains no valid numerical data.")
-    if mask.any():
-        arr[mask] = np.interp(np.flatnonzero(mask), np.flatnonzero(~mask), arr[~mask])
-    return arr
+    n_missing = int(mask.sum())
+    if n_missing == 0:
+        return arr, 0
+    frac_missing = n_missing / len(arr)
+    if frac_missing >= 1.0:
+        raise ValueError(f"The {label} column contains no valid numerical data.")
+    if frac_missing > 0.10:
+        raise ValueError(
+            f"{n_missing} of {len(arr)} values ({frac_missing:.0%}) in the {label} "
+            f"column are missing - too many to interpolate reliably. Check the file."
+        )
+    arr = arr.copy()
+    arr[mask] = np.interp(np.flatnonzero(mask), np.flatnonzero(~mask), arr[~mask])
+    return arr, n_missing
 
 def load_csv_signal(filename, fs_override=None):
+    """Returns (fs, signal, n_interpolated)."""
     delim = _detect_delimiter(filename)
     skip = _header_skip_count(filename, delim)
-    raw = np.genfromtxt(filename, delimiter=delim, skip_header=skip)
+    try:
+        raw = np.genfromtxt(filename, delimiter=delim, skip_header=skip)
+    except Exception:
+        raise ValueError("Could not parse CSV/TXT data safely. Ensure data is numeric.")
 
     if raw.ndim == 1:
         if fs_override is None:
             raise ValueError("Single-column data: sample rate (Hz) is required.")
-        return fs_override, _fill_nans(raw).astype(np.float32)
+        filled, n_missing = _fill_nans(raw, "value")
+        return fs_override, filled.astype(np.float32), n_missing
     else:
-        t_col, sig_col = _fill_nans(raw[:, 0]), _fill_nans(raw[:, 1])
+        t_col, n_missing_t = _fill_nans(raw[:, 0], "time")
+        sig_col, n_missing_v = _fill_nans(raw[:, 1], "value")
         dt = np.diff(t_col)
         if dt.size == 0:
             raise ValueError("Time column has only one row - at least 2 samples are needed.")
@@ -91,7 +107,7 @@ def load_csv_signal(filename, fs_override=None):
         if not np.all(dt > 0):
             raise ValueError("Time column is not monotonically increasing. Check for out-of-order rows.")
         fs = 1.0 / np.mean(dt)
-        return fs, sig_col.astype(np.float32)
+        return fs, sig_col.astype(np.float32), n_missing_t + n_missing_v
 
 def load_wav_signal(filename):
     fs, signal = wavfile.read(filename)
@@ -109,23 +125,30 @@ def load_wav_signal(filename):
 def generate_real_audio_demo():
     url = "https://raw.githubusercontent.com/Uberi/speech_recognition/master/examples/english.wav"
     tmp_path = os.path.join(tempfile.gettempdir(), "real_voice_demo_clear.wav")
-    
-    if not os.path.exists(tmp_path):
-        try:
-            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=3.0) as response, open(tmp_path, 'wb') as out_file:
-                out_file.write(response.read())
-            return load_wav_signal(tmp_path)
-        except Exception:
-            fs = 8000
-            t = np.linspace(0, 3.0, int(fs * 3.0), endpoint=False)
-            source = sawtooth(2 * np.pi * 120 * t)
-            b1, a1 = butter(2, [600/(fs/2), 800/(fs/2)], btype='bandpass')
-            b2, a2 = butter(2, [1000/(fs/2), 1200/(fs/2)], btype='bandpass')
-            b3, a3 = butter(2, [2300/(fs/2), 2700/(fs/2)], btype='bandpass')
-            synthetic_voice = lfilter(b1, a1, source) + 0.5 * lfilter(b2, a2, source) + 0.1 * lfilter(b3, a3, source)
-            return fs, (synthetic_voice / np.max(np.abs(synthetic_voice))).astype(np.float32)
-    return load_wav_signal(tmp_path)
+    fail_marker = tmp_path + ".failed"
+
+    def _synthetic_fallback():
+        fs = 8000
+        t = np.linspace(0, 3.0, int(fs * 3.0), endpoint=False)
+        source = sawtooth(2 * np.pi * 120 * t)
+        b1, a1 = butter(2, [600/(fs/2), 800/(fs/2)], btype='bandpass')
+        b2, a2 = butter(2, [1000/(fs/2), 1200/(fs/2)], btype='bandpass')
+        b3, a3 = butter(2, [2300/(fs/2), 2700/(fs/2)], btype='bandpass')
+        synthetic_voice = lfilter(b1, a1, source) + 0.5 * lfilter(b2, a2, source) + 0.1 * lfilter(b3, a3, source)
+        return fs, (synthetic_voice / np.max(np.abs(synthetic_voice))).astype(np.float32)
+
+    if os.path.exists(fail_marker):
+        return _synthetic_fallback()
+    if os.path.exists(tmp_path):
+        return load_wav_signal(tmp_path)
+    try:
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=3.0) as response, open(tmp_path, 'wb') as out_file:
+            out_file.write(response.read())
+        return load_wav_signal(tmp_path)
+    except Exception:
+        open(fail_marker, 'w').close()  
+        return _synthetic_fallback()
 
 def generate_ecg_demo(duration=10.0, fs=250, heart_rate_bpm=72):
     t = np.linspace(0, duration, int(fs * duration), endpoint=False)
@@ -216,7 +239,7 @@ def convert_audio_to_wav(input_path, output_path=None):
             capture_output=True, text=True
         )
     except FileNotFoundError:
-        raise RuntimeError("ffmpeg is not installed. Upload a .wav file instead.")
+        raise RuntimeError("FFmpeg is not installed on this system. Upload a .wav file instead.")
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg couldn't convert {input_path}:\n{result.stderr.strip()[-500:]}")
     return output_path
@@ -250,18 +273,27 @@ def load_mat_signal(filename, fs_override=None, var_name=None):
         sig_key = max(keys, key=lambda k: np.asarray(data[k]).size)
         sig = np.asarray(data[sig_key]).squeeze()
 
-    fs = None
+    detected_fs = None
     for k in keys:
-        if any(tag in k.lower() for tag in ('fs', 'rate', 'freq')):
+        if any(tag in k.lower() for tag in ('fs', 'rate', 'freq', 'samp')):
             val = np.asarray(data[k]).squeeze()
             if val.size == 1:
-                fs = float(val)
+                detected_fs = float(val)
                 break
-    if fs is None:
+
+    warning = None
+    if fs_override is not None:
         fs = fs_override
-    if fs is None:
+        if detected_fs is not None and detected_fs != fs_override:
+            warning = (f"Using your entered rate ({fs_override} Hz) - the file also embeds "
+                       f"{detected_fs} Hz, which was NOT used. Double check which is correct.")
+    elif detected_fs is not None:
+        fs = detected_fs
+    else:
         raise ValueError(f"Couldn't auto-detect a sample rate (variables found: {keys}).")
-    return fs, _fill_nans(sig).astype(np.float32)
+
+    filled, n_missing = _fill_nans(sig, "signal")
+    return fs, filled.astype(np.float32), n_missing, warning
 
 def load_edf_signal(filename, channel=0):
     pyedflib = _ensure_package('pyedflib')
@@ -274,20 +306,27 @@ def load_edf_signal(filename, channel=0):
         fs = f.getSampleFrequency(channel)
     finally:
         f.close()
-    return fs, _fill_nans(signal).astype(np.float32)
+    filled, n_missing = _fill_nans(signal, "signal")
+    return fs, filled.astype(np.float32), n_missing
 
 def load_any_signal(filename, fs_override=None, mat_var_name=None, edf_channel=0):
+    """Always returns (fs, signal, n_interpolated, warning) - the last two are
+    0/None for loaders that don't have those concepts (wav/edf)."""
     ext = os.path.splitext(filename)[1].lower()
     if ext == '.wav':
-        return load_wav_signal(filename)
+        fs, sig = load_wav_signal(filename)
+        return fs, sig, 0, None
     elif ext in AUDIO_EXTS:
-        return load_wav_signal(convert_audio_to_wav(filename))
+        fs, sig = load_wav_signal(convert_audio_to_wav(filename))
+        return fs, sig, 0, None
     elif ext in ('.csv', '.txt'):
-        return load_csv_signal(filename, fs_override)
+        fs, sig, n_missing = load_csv_signal(filename, fs_override)
+        return fs, sig, n_missing, None
     elif ext == '.mat':
         return load_mat_signal(filename, fs_override, mat_var_name)
     elif ext in ('.edf', '.bdf'):
-        return load_edf_signal(filename, edf_channel)
+        fs, sig, n_missing = load_edf_signal(filename, edf_channel)
+        return fs, sig, n_missing, None
     else:
         raise ValueError(f"Unsupported file type: {ext}")
 
@@ -315,15 +354,16 @@ def design_iir(filter_type, fs, cutoff, cutoff2=None, order=4):
     return b, a
 
 def apply_filter(b, a, signal):
+    """Applies filter and returns (filtered_signal, fallback_warning_flag)"""
     padlen = 3 * max(len(a), len(b))
     if len(signal) > padlen:
-        return filtfilt(b, a, signal)
-    st.warning(f"Signal too short for zero-phase filtering (needs > {padlen} samples) - using standard filtering.")
-    return lfilter(b, a, signal)
+        return filtfilt(b, a, signal), False
+    # If signal is too short for zero-phase filtfilt, fallback to lfilter
+    return lfilter(b, a, signal), True
 
 
 # ============================================================================
-# 2D IMAGE DSP ENGINE - Pure numpy/scipy implementations (No OpenCV)
+# 2D IMAGE DSP ENGINE 
 # ============================================================================
 
 @st.cache_data(show_spinner=False)
@@ -333,7 +373,6 @@ def load_image_array(image_bytes):
 
 @st.cache_data(show_spinner=False)
 def gen_zone_plate(size=512):
-    """Generates a 2D mathematical Zone Plate (concentric rings), standard DSP test image."""
     x = np.linspace(-1, 1, size)
     y = np.linspace(-1, 1, size)
     X, Y = np.meshgrid(x, y)
@@ -344,11 +383,10 @@ def gen_zone_plate(size=512):
 
 @st.cache_data(show_spinner=False)
 def gen_2d_grating(size=512):
-    """Generates a 2D Spatial Grating pattern."""
     x = np.linspace(-1, 1, size)
     y = np.linspace(-1, 1, size)
     X, Y = np.meshgrid(x, y)
-    Z = np.sin(20 * np.pi * X) + np.cos(20 * np.pi * Y)  # true range is [-2, 2]
+    Z = np.sin(20 * np.pi * X) + np.cos(20 * np.pi * Y)  
     Z = ((Z + 2) / 4 * 255).astype(np.uint8)
     return np.stack([Z, Z, Z], axis=-1)
 
@@ -386,34 +424,32 @@ def apply_sharpening(image_array):
 
 @st.cache_data(show_spinner="Computing 2D FFT...")
 def apply_fft2d(image_array):
-    """Computes the 2D Spatial Frequency Spectrum (Magnitude) of the image."""
     gray = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
     f = np.fft.fft2(gray)
     fshift = np.fft.fftshift(f)
     magnitude_spectrum = 20 * np.log10(np.abs(fshift) + 1e-8)
-    norm_mag = ((magnitude_spectrum - magnitude_spectrum.min()) / (magnitude_spectrum.max() - magnitude_spectrum.min()) * 255)
+    spread = magnitude_spectrum.max() - magnitude_spectrum.min()
+    if spread < 1e-9:
+        return np.full(gray.shape, 128, dtype=np.uint8)
+    norm_mag = (magnitude_spectrum - magnitude_spectrum.min()) / spread * 255
     return norm_mag.astype(np.uint8)
 
 @st.cache_data(show_spinner="Applying Median Filter...")
 def apply_median_filter(image_array, size):
-    """Non-linear spatial filter for denoising (salt-and-pepper) while keeping edges."""
     return ndimage.median_filter(image_array, size=(size, size, 1))
 
 @st.cache_data(show_spinner="Applying Thresholding...")
 def apply_binarization(image_array, threshold):
-    """Converts image to pure black and white (Binary) based on a threshold."""
     gray = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
     bw = (gray > threshold).astype(np.uint8) * 255
     return np.stack([bw, bw, bw], axis=-1)
 
 @st.cache_data(show_spinner="Applying Erosion...")
 def apply_erosion(image_array, size):
-    """Morphological minimum filter (Shrinks bright shapes)."""
     return ndimage.grey_erosion(image_array, size=(size, size, 1))
 
 @st.cache_data(show_spinner="Applying Dilation...")
 def apply_dilation(image_array, size):
-    """Morphological maximum filter (Expands bright shapes)."""
     return ndimage.grey_dilation(image_array, size=(size, size, 1))
 
 
@@ -452,6 +488,8 @@ if app_mode == "📈 1D Signal Studio":
         "Demo: Step Signal"
     ]
     source = st.sidebar.selectbox("Source", source_options)
+    
+    st.sidebar.caption("Note: MP3, AAC, and FLAC files require FFmpeg to be installed on the host system.")
 
     fs = signal = None
 
@@ -498,7 +536,11 @@ if app_mode == "📈 1D Signal Studio":
                 fs_override = float(manual_fs) if manual_fs > 0 else None
 
             try:
-                fs, signal = load_any_signal(tmp_path, fs_override=fs_override)
+                fs, signal, n_interp, fs_warning = load_any_signal(tmp_path, fs_override=fs_override)
+                if n_interp:
+                    st.sidebar.warning(f"Interpolated {n_interp} missing value(s) found in the file.")
+                if fs_warning:
+                    st.sidebar.warning(fs_warning)
             except ValueError as e:
                 if ext == '.mat':
                     st.sidebar.warning(f"{e} Enter a sample rate below to proceed.")
@@ -508,7 +550,9 @@ if app_mode == "📈 1D Signal Studio":
                     if manual_fs <= 0:
                         st.stop()
                     try:
-                        fs, signal = load_any_signal(tmp_path, fs_override=float(manual_fs))
+                        fs, signal, n_interp, fs_warning = load_any_signal(tmp_path, fs_override=float(manual_fs))
+                        if n_interp:
+                            st.sidebar.warning(f"Interpolated {n_interp} missing value(s) found in the file.")
                     except Exception as e2:
                         st.sidebar.error(str(e2))
                         st.stop()
@@ -577,8 +621,6 @@ if app_mode == "📈 1D Signal Studio":
     
     graph_format = st.sidebar.selectbox("Graph Format", ["PNG", "PDF", "SVG"]).lower()
     audio_format = st.sidebar.selectbox("Audio Format", ["WAV", "MP3", "FLAC"]).lower()
-    
-    # Bottom margin spacer to prevent cutoff
     st.sidebar.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
 
     graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
@@ -603,10 +645,7 @@ if app_mode == "📈 1D Signal Studio":
     t = np.arange(n) / fs
     freqs = np.fft.rfftfreq(n, 1 / fs)
     
-    if source == "Demo: Impulse (Delta) Signal":
-        magnitude = np.abs(np.fft.rfft(signal))
-    else:
-        magnitude = np.abs(np.fft.rfft(signal)) / n
+    magnitude = np.abs(np.fft.rfft(signal)) / n
 
     st.header("Signal Analysis")
     fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
@@ -677,22 +716,21 @@ if app_mode == "📈 1D Signal Studio":
     if family == "FIR" and len(z) > 0:
         p = np.zeros(len(z))
 
-    if len(p) > 0 and np.any(np.abs(p) >= 1.0):
+    if len(p) > 0 and np.any(np.abs(p) >= 1.0 + 1e-5):
         st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode.")
         st.stop()  
 
     try:
-        filtered = apply_filter(b, a, signal)
+        filtered, fallback_warning = apply_filter(b, a, signal)
+        if fallback_warning:
+            padlen = 3 * max(len(a), len(b))
+            st.warning(f"Signal too short for zero-phase filtering (needs > {padlen} samples) - using standard filtering.")
     except Exception as e:
         st.error(f"Filtering failed: {e}")
         st.stop()
 
     freqs_f = np.fft.rfftfreq(len(filtered), 1 / fs)
-    
-    if source == "Demo: Impulse (Delta) Signal":
-        mag_f = np.abs(np.fft.rfft(filtered))
-    else:
-        mag_f = np.abs(np.fft.rfft(filtered)) / len(filtered)
+    mag_f = np.abs(np.fft.rfft(filtered)) / len(filtered)
         
     w, h = freqz(b, a, worN=2048, fs=fs)
 
@@ -719,6 +757,7 @@ if app_mode == "📈 1D Signal Studio":
         axs2[3].scatter(np.real(z), np.imag(z), marker='o', edgecolors='b', facecolors='none', label='Zeros (O)')
     if len(p) > 0:
         axs2[3].scatter(np.real(p), np.imag(p), marker='x', color='r', label='Poles (X)')
+        
     axs2[3].axhline(0, color='gray', alpha=0.3)
     axs2[3].axvline(0, color='gray', alpha=0.3)
     axs2[3].set_title("Filter Stability: Pole-Zero Plot (Z-Plane)")
@@ -763,7 +802,7 @@ if app_mode == "📈 1D Signal Studio":
                     result = subprocess.run(['ffmpeg', '-y', '-i', tmp_wav.name, tmp_out], capture_output=True, text=True)
                 except FileNotFoundError:
                     os.remove(tmp_wav.name)
-                    st.error("ffmpeg is not installed. Choose WAV instead.")
+                    st.error("FFmpeg is not installed on the system. Choose WAV format instead.")
                     st.stop()
                 if result.returncode != 0 or not os.path.exists(tmp_out):
                     os.remove(tmp_wav.name)
@@ -838,10 +877,28 @@ elif app_mode == "🖼️ 2D Image Studio":
     if original_array is not None:
         pil_original = Image.fromarray(original_array)
         
+        # Kept export settings in the sidebar
         st.sidebar.markdown("---")
-        st.sidebar.header("2. DSP Operations")
+        st.sidebar.header("2. Export Settings")
         
-        operation = st.sidebar.selectbox(
+        # ADDED "PDF" to the dropdown options
+        image_format = st.sidebar.selectbox("Export Format", ["PNG", "JPG", "BMP", "PDF"]).lower()
+        
+        st.sidebar.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
+        
+        pil_format = "JPEG" if image_format == "jpg" else image_format.upper()
+        # Handled the PDF mime type correctly
+        mime_format = "application/pdf" if image_format == "pdf" else f"image/{'jpeg' if image_format == 'jpg' else image_format}"
+
+        # Moved to main window above DSP selection
+        st.subheader("Original Image")
+        st.image(pil_original, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("DSP Operations")
+        
+        # Operation selectbox now inside the main window instead of sidebar
+        operation = st.selectbox(
             "2D DSP Operation",
             [
                 "Sobel Edge Detection", 
@@ -856,27 +913,17 @@ elif app_mode == "🖼️ 2D Image Studio":
             key="image_2d_operation"
         )
 
-        # Dynamic parameter controls based on the selected operation
+        # Dynamic parameter sliders now inside the main window instead of sidebar
         sigma = 2.0
         kernel_size = 3
         threshold = 128
 
         if operation == "Gaussian Blur":
-            sigma = st.sidebar.slider("Sigma (blur strength)", 0.1, 10.0, 2.0, 0.1)
+            sigma = st.slider("Sigma (blur strength)", 0.1, 10.0, 2.0, 0.1)
         elif operation in ["Median Filtering", "Morphological Erosion", "Morphological Dilation"]:
-            kernel_size = st.sidebar.slider("Kernel Size (pixels)", min_value=3, max_value=21, value=5, step=2)
+            kernel_size = st.slider("Kernel Size (pixels)", min_value=3, max_value=21, value=5, step=2)
         elif operation == "Image Binarization (Threshold)":
-            threshold = st.sidebar.slider("Threshold Level", 0, 255, 128, 1)
-
-        st.sidebar.markdown("---")
-        st.sidebar.header("3. Export Settings")
-        image_format = st.sidebar.selectbox("Export Format", ["PNG", "JPG", "BMP"]).lower()
-        
-        # Bottom margin spacer to prevent cutoff
-        st.sidebar.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
-        
-        pil_format = "JPEG" if image_format == "jpg" else image_format.upper()
-        mime_format = f"image/{'jpeg' if image_format == 'jpg' else image_format}"
+            threshold = st.slider("Threshold Level", 0, 255, 128, 1)
 
         # Execute 2D logic
         if operation == "Sobel Edge Detection":
@@ -912,9 +959,6 @@ elif app_mode == "🖼️ 2D Image Studio":
             result_caption = f"Dilation (Local Maximum), {kernel_size}x{kernel_size} footprint"
 
         pil_filtered = Image.fromarray(filtered_array)
-
-        st.subheader("Original Image")
-        st.image(pil_original, use_container_width=True)
 
         st.markdown("---")
         
