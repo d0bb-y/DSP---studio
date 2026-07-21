@@ -648,8 +648,7 @@ if app_mode == "📈 1D Signal Studio":
         equation = r"x(t) = \sin(2\pi f_0 t) + \mathcal{N}(0, \sigma^2)"
 
     if equation:
-        st.header("Signal Equation")
-        st.latex(equation)
+        st.markdown(f"## Signal Equation &nbsp;&nbsp;&nbsp; ${equation}$")
 
     st.header("Signal Metrics & Statistics")
     peak_to_peak = float(np.max(signal) - np.min(signal))
@@ -752,7 +751,7 @@ if app_mode == "📈 1D Signal Studio":
         filtered, fallback_warning = apply_filter(b, a, signal)
         if fallback_warning:
             padlen = 3 * max(len(a), len(b))
-            st.warning(f"Signal too short for zero-phase filtering (needs > {padlen} samples) - using standard filtering.")
+            st.warning(f"Signal too short for [zero-phase filtering](https://en.wikipedia.org/wiki/Linear_phase) (needs > {padlen} samples) - using standard filtering.")
     except Exception as e:
         st.error(f"Filtering failed: {e}")
         st.stop()
