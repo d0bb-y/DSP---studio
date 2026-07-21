@@ -26,29 +26,6 @@ from PIL import Image
 st.set_page_config(page_title="DSP Signal Analyzer", layout="wide")
 
 # ============================================================================
-# UI CLEANUP - Catch-All CSS targeting ONLY the top-right toolbar
-# ============================================================================
-hide_st_style = """
-    <style>
-    /* Hide the top-right menu and deploy buttons (targets new and old Streamlit versions) */
-    .stAppToolbar {display: none !important;}
-    [data-testid="stToolbar"] {display: none !important;}
-    [data-testid="stHeaderActionElements"] {display: none !important;}
-    
-    /* Hide the Streamlit footer watermark */
-    footer {display: none !important;}
-    
-    /* Hide Streamlit Community Cloud Fork/Viewer Badges */
-    .viewerBadge_container__1QSob {display: none !important;}
-    .styles_viewerBadge__1yB5_ {display: none !important;}
-    
-    /* EXPLICITLY FORCE the sidebar toggle button to remain visible */
-    [data-testid="collapsedControl"] {display: flex !important; visibility: visible !important;}
-    </style>
-"""
-st.markdown(hide_st_style, unsafe_allow_html=True)
-
-# ============================================================================
 # DSP ENGINE - Pure Logic (No Streamlit UI inside these functions)
 # ============================================================================
 
