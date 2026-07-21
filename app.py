@@ -26,18 +26,24 @@ from PIL import Image
 st.set_page_config(page_title="DSP Signal Analyzer", layout="wide")
 
 # ============================================================================
-# UI CLEANUP - The Ultimate Fix for Sidebar vs GitHub Icon
+# UI CLEANUP - Catch-All CSS targeting ONLY the top-right toolbar
 # ============================================================================
 hide_st_style = """
     <style>
-    /* Hide the specific container on the right that holds the GitHub, Menu, and Deploy buttons */
+    /* Hide the top-right menu and deploy buttons (targets new and old Streamlit versions) */
+    .stAppToolbar {display: none !important;}
+    [data-testid="stToolbar"] {display: none !important;}
     [data-testid="stHeaderActionElements"] {display: none !important;}
     
-    /* Fallback for older Streamlit versions just in case */
-    [data-testid="stToolbar"] {display: none !important;}
-    
     /* Hide the Streamlit footer watermark */
-    footer {visibility: hidden !important;}
+    footer {display: none !important;}
+    
+    /* Hide Streamlit Community Cloud Fork/Viewer Badges */
+    .viewerBadge_container__1QSob {display: none !important;}
+    .styles_viewerBadge__1yB5_ {display: none !important;}
+    
+    /* EXPLICITLY FORCE the sidebar toggle button to remain visible */
+    [data-testid="collapsedControl"] {display: flex !important; visibility: visible !important;}
     </style>
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
