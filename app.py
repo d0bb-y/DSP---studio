@@ -26,6 +26,19 @@ from PIL import Image
 st.set_page_config(page_title="DSP Signal Analyzer", layout="wide")
 
 # ============================================================================
+# UI CLEANUP - Hide GitHub Icon and Streamlit Menu
+# ============================================================================
+hide_st_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    .st-emotion-cache-1wbqy5l {display: none;} /* Hides the fork button container */
+    </style>
+"""
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
+# ============================================================================
 # DSP ENGINE - Pure Logic (No Streamlit UI inside these functions)
 # ============================================================================
 
