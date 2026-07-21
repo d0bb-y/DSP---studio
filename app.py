@@ -648,8 +648,7 @@ if app_mode == "📈 1D Signal Studio":
         equation = r"x(t) = \sin(2\pi f_0 t) + \mathcal{N}(0, \sigma^2)"
 
     if equation:
-        st.markdown("### Signal Equation")
-        st.markdown(f"${equation}$")
+        st.markdown(f"### Signal Equation &nbsp;&nbsp;&nbsp; ${equation}$")
 
     st.header("Signal Metrics & Statistics")
     peak_to_peak = float(np.max(signal) - np.min(signal))
@@ -752,7 +751,13 @@ if app_mode == "📈 1D Signal Studio":
         filtered, fallback_warning = apply_filter(b, a, signal)
         if fallback_warning:
             padlen = 3 * max(len(a), len(b))
-            st.warning(f"Signal too short for [zero-phase filtering](https://en.wikipedia.org/wiki/Linear_phase) (needs > {padlen} samples) - using standard filtering.")
+            st.warning(f"Signal too short for zero-phase filtering (needs > {padlen} samples) - using standard filtering.")
+            with st.popover("ℹ️ What is Zero-Phase Filtering?"):
+                st.markdown(
+                    "**Zero-Phase Filtering** (`filtfilt`) processes the signal twice: once forward, and once backward.\n\n"
+                    "* **The Benefit:** It perfectly preserves the original shape and timing of the waveform by ensuring zero phase shift (no time delay) across all frequencies.\n"
+                    f"* **The Catch:** It requires the signal to be at least 3 times longer than the filter length (in this case, > {padlen} samples) to properly pad and reverse the data. Since your signal is too short, the app safely fell back to standard, single-pass filtering (`lfilter`), which might introduce a slight time shift."
+                )
     except Exception as e:
         st.error(f"Filtering failed: {e}")
         st.stop()
