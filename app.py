@@ -624,32 +624,34 @@ if app_mode == "📈 1D Signal Studio":
     graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
     audio_mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}.get(audio_format, f"audio/{audio_format}")
 
-    st.header("Signal Analysis")
-    
     # --- DYNAMIC SIGNAL EQUATIONS ---
+    equation = None
     if "Impulse" in source:
-        st.latex(r"x[n] = \delta\left[n - \frac{N}{2}\right]")
-        st.info("💡 **Professor's Note:** A pure impulse signal has a Z-transform of $X(z) = 1$, meaning it has **zero poles and zero zeros**. The Pole-Zero plot shown in the 'Filter Design' section below represents the transfer function of the **filter** ($H(z)$), not the input signal!")
+        equation = r"x[n] = \delta\left[n - \frac{N}{2}\right]"
     elif "Step" in source:
-        st.latex(r"x[n] = u\left[n - \frac{N}{2}\right]")
+        equation = r"x[n] = u\left[n - \frac{N}{2}\right]"
     elif "Pure Sine" in source:
-        st.latex(r"x(t) = \sin(2\pi f_0 t)")
+        equation = r"x(t) = \sin(2\pi f_0 t)"
     elif "Multi-Tone" in source:
-        st.latex(r"x(t) = \sin(2\pi f_1 t) + 0.5\sin(2\pi f_2 t) + 0.25\sin(2\pi f_3 t)")
+        equation = r"x(t) = \sin(2\pi f_1 t) + 0.5\sin(2\pi f_2 t) + 0.25\sin(2\pi f_3 t)"
     elif "Square" in source:
-        st.latex(r"x(t) = \operatorname{sgn}(\sin(2\pi f_0 t))")
+        equation = r"x(t) = \operatorname{sgn}(\sin(2\pi f_0 t))"
     elif "Triangle" in source:
-        st.latex(r"x(t) = \frac{2}{\pi} \arcsin(\sin(2\pi f_0 t))")
+        equation = r"x(t) = \frac{2}{\pi} \arcsin(\sin(2\pi f_0 t))"
     elif "Sawtooth" in source:
-        st.latex(r"x(t) = 2 \left( \frac{t}{T} - \left\lfloor \frac{t}{T} + \frac{1}{2} \right\rfloor \right)")
+        equation = r"x(t) = 2 \left( \frac{t}{T} - \left\lfloor \frac{t}{T} + \frac{1}{2} \right\rfloor \right)"
     elif "Chirp" in source:
-        st.latex(r"x(t) = \sin\left(2\pi \left( f_0 + \frac{f_1 - f_0}{2T}t \right) t \right)")
+        equation = r"x(t) = \sin\left(2\pi \left( f_0 + \frac{f_1 - f_0}{2T}t \right) t \right)"
     elif "White Noise" in source:
-        st.latex(r"x[n] \sim \mathcal{N}(0, \sigma^2)")
+        equation = r"x[n] \sim \mathcal{N}(0, \sigma^2)"
     elif "Noisy Sine" in source:
-        st.latex(r"x(t) = \sin(2\pi f_0 t) + \mathcal{N}(0, \sigma^2)")
+        equation = r"x(t) = \sin(2\pi f_0 t) + \mathcal{N}(0, \sigma^2)"
 
-    st.subheader("Signal Metrics & Statistics")
+    if equation:
+        st.header("Signal Equation")
+        st.latex(equation)
+
+    st.header("Signal Metrics & Statistics")
     peak_to_peak = float(np.max(signal) - np.min(signal))
     rms = float(np.sqrt(np.mean(np.square(signal))))
     peak_abs = float(np.max(np.abs(signal)))
@@ -673,6 +675,7 @@ if app_mode == "📈 1D Signal Studio":
     else:
         magnitude = np.abs(np.fft.rfft(signal)) / n
 
+    st.header("Signal Analysis")
     fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
     axs1[0].plot(t + trim_start, signal, linewidth=0.7)
     axs1[0].set_title("Waveform (Time Domain)")
