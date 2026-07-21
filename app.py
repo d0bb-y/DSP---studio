@@ -26,14 +26,22 @@ from PIL import Image
 st.set_page_config(page_title="DSP Signal Analyzer", layout="wide")
 
 # ============================================================================
-# UI CLEANUP - Hide GitHub Icon and Streamlit Menu (Keeping Sidebar Toggle!)
+# UI CLEANUP - Bulletproof CSS to hide GitHub/Menu but keep Sidebar Toggle
 # ============================================================================
 hide_st_style = """
     <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    /* Hides the top-right toolbar (GitHub, Fork, Deploy, Menu) but keeps the sidebar toggle */
-    [data-testid="stToolbar"] {display: none !important;}
+    /* Hide the entire header (which holds the GitHub, Fork, and Menu buttons) */
+    header {visibility: hidden !important;}
+    
+    /* Force ONLY the sidebar toggle button to remain visible */
+    [data-testid="collapsedControl"] {visibility: visible !important;}
+    
+    /* Hide the default Streamlit footer and bottom padding */
+    footer {visibility: hidden !important;}
+    #MainMenu {visibility: hidden !important;}
+    
+    /* Target specific Streamlit Cloud viewer badges just in case */
+    .viewerBadge_container__1QSob {display: none !important;}
     </style>
 """
 st.markdown(hide_st_style, unsafe_allow_html=True)
