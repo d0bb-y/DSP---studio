@@ -627,25 +627,25 @@ if app_mode == "📈 1D Signal Studio":
     # --- DYNAMIC SIGNAL EQUATIONS ---
     equation = None
     if "Impulse" in source:
-        equation = r"x[n] = \delta\left[n - \frac{N}{2}\right]"
+        equation = r"x[n] = \delta[n - n_0], \quad n_0 = \frac{N}{2}"
     elif "Step" in source:
-        equation = r"x[n] = u\left[n - \frac{N}{2}\right]"
+        equation = r"x[n] = u[n - n_0], \quad n_0 = \frac{N}{2}"
     elif "Pure Sine" in source:
-        equation = r"x(t) = \sin(2\pi f_0 t)"
+        equation = r"x[n] = \sin(2\pi f_0 n T_s)"
     elif "Multi-Tone" in source:
-        equation = r"x(t) = \sin(2\pi f_1 t) + 0.5\sin(2\pi f_2 t) + 0.25\sin(2\pi f_3 t)"
+        equation = r"x[n] = \sin(2\pi f_1 n T_s) + 0.5\sin(2\pi f_2 n T_s) + 0.25\sin(2\pi f_3 n T_s)"
     elif "Square" in source:
-        equation = r"x(t) = \operatorname{sgn}(\sin(2\pi f_0 t))"
+        equation = r"x[n] = \frac{4}{\pi} \sum_{k=1,3,5,\dots}^{\infty} \frac{\sin(2\pi k f_0 n T_s)}{k}"
     elif "Triangle" in source:
-        equation = r"x(t) = \frac{2}{\pi} \arcsin(\sin(2\pi f_0 t))"
+        equation = r"x[n] = \frac{8}{\pi^2} \sum_{k=1,3,5,\dots}^{\infty} \frac{(-1)^{\frac{k-1}{2}}}{k^2} \sin(2\pi k f_0 n T_s)"
     elif "Sawtooth" in source:
-        equation = r"x(t) = 2 \left( \frac{t}{T} - \left\lfloor \frac{t}{T} + \frac{1}{2} \right\rfloor \right)"
+        equation = r"x[n] = \frac{2}{\pi} \sum_{k=1}^{\infty} \frac{(-1)^{k+1}}{k} \sin(2\pi k f_0 n T_s)"
     elif "Chirp" in source:
-        equation = r"x(t) = \sin\left(2\pi \left( f_0 + \frac{f_1 - f_0}{2T}t \right) t \right)"
+        equation = r"x[n] = \sin\left(2\pi \left( f_0 + \frac{f_1 - f_0}{2T}n T_s \right) n T_s \right)"
     elif "White Noise" in source:
-        equation = r"x[n] \sim \mathcal{N}(0, \sigma^2)"
+        equation = r"x[n] = w[n], \quad w[n] \sim \mathcal{N}(0, \sigma^2)"
     elif "Noisy Sine" in source:
-        equation = r"x(t) = \sin(2\pi f_0 t) + \mathcal{N}(0, \sigma^2)"
+        equation = r"x[n] = \sin(2\pi f_0 n T_s) + w[n], \quad w[n] \sim \mathcal{N}(0, \sigma^2)"
 
     if equation:
         st.markdown(f"### Signal Equation &nbsp;&nbsp;&nbsp; ${equation}$")
@@ -743,7 +743,7 @@ if app_mode == "📈 1D Signal Studio":
     if family == "FIR" and len(z) > 0:
         p = np.zeros(len(z))
 
-    if len(p) > 0 and np.any(np.abs(p) >= 1.0 + 1e-5):
+    if len(p) > 0 and np.any(np.abs(p) >= 1.0):
         st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode.")
         st.stop()  
 
