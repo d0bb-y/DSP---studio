@@ -649,7 +649,7 @@ if app_mode == "📈 1D Signal Studio":
 
     if equation:
         st.markdown("### Signal Equation")
-        st.latex(equation)
+        st.markdown(f"$\displaystyle {equation}$")
 
     st.header("Signal Metrics & Statistics")
     peak_to_peak = float(np.max(signal) - np.min(signal))
