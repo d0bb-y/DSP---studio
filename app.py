@@ -648,7 +648,8 @@ if app_mode == "📈 1D Signal Studio":
         equation = r"x[n] = \sin(2\pi f_0 n T_s) + w[n], \quad w[n] \sim \mathcal{N}(0, \sigma^2)"
 
     if equation:
-        st.markdown(f"### Signal Equation &nbsp;&nbsp;&nbsp; ${equation}$")
+        st.markdown("### Signal Equation")
+        st.latex(equation)
 
     st.header("Signal Metrics & Statistics")
     peak_to_peak = float(np.max(signal) - np.min(signal))
