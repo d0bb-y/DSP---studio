@@ -605,13 +605,14 @@ if app_mode == "📈 1D Signal Studio":
         "Select time range (seconds)", min_value=0.0, max_value=full_duration, value=(0.0, full_duration)
     )
 
-    if trim_end > trim_start:
-        start_sample = int(trim_start * fs)
-        end_sample = int(trim_end * fs)
+    # FIX 2: Added integer boundary check to prevent zero-length array ValueErrors
+    start_sample = int(trim_start * fs)
+    end_sample = int(trim_end * fs)
+    if end_sample > start_sample:
         signal = full_signal[start_sample:end_sample]
         st.sidebar.caption(f"✂️ Analyzing: {len(signal)} samples ({len(signal)/fs:.2f}s)")
     else:
-        st.sidebar.error("Start time must be strictly before end time.")
+        st.sidebar.error("Time range is too narrow. Select a wider range containing at least 1 sample.")
         st.stop()
 
     st.sidebar.markdown("---")
@@ -649,7 +650,8 @@ if app_mode == "📈 1D Signal Studio":
 
     if equation:
         st.markdown("### Signal Equation")
-        st.markdown(f"$\displaystyle {equation}$")
+        # FIX 3: Added 'r' string formatting to prevent 3.12+ syntax warnings
+        st.markdown(rf"$\displaystyle {equation}$")
 
     st.header("Signal Metrics & Statistics")
     peak_to_peak = float(np.max(signal) - np.min(signal))
@@ -679,7 +681,7 @@ if app_mode == "📈 1D Signal Studio":
 
     st.header("Signal Analysis")
     fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
-    axs1[0].plot(t + trim_start, signal, linewidth=0.7)
+    axs1[0].plot(t, signal, linewidth=0.7)
     axs1[0].set_title("Waveform (Time Domain)")
     axs1[0].set_xlabel("Time (s)"); axs1[0].set_ylabel("Amplitude")
 
@@ -690,7 +692,7 @@ if app_mode == "📈 1D Signal Studio":
 
     if n >= 256:
         f_spec, t_spec, Sxx = spectrogram(signal, fs, nperseg=min(1024, n), noverlap=min(512, n // 2))
-        im = axs1[2].pcolormesh(t_spec + trim_start, f_spec, 10 * np.log10(Sxx + 1e-12), shading="gouraud")
+        im = axs1[2].pcolormesh(t_spec, f_spec, 10 * np.log10(Sxx + 1e-12), shading="gouraud")
         axs1[2].set_title("Spectrogram")
         axs1[2].set_xlabel("Time (s)")
         axs1[2].set_ylabel("Frequency (Hz)")
@@ -718,8 +720,22 @@ if app_mode == "📈 1D Signal Studio":
     # Extract phase from the complex FFT
     phase = np.angle(fft_complex)
 
+    # FIX 1: THE 3D SCATTER "TOP-K" FIX
+    # Protects RAM from 1.3+ million points while guaranteeing the highest peaks 
+    # are NEVER accidentally decimated away, keeping the 2D and 3D graphs perfectly aligned.
+    n_points = len(freqs)
+    if n_points > 3000:
+        top_indices = np.argsort(magnitude)[-3000:]
+        plot_freqs = freqs[top_indices]
+        plot_phase = phase[top_indices]
+        plot_mag = magnitude[top_indices]
+    else:
+        plot_freqs = freqs
+        plot_phase = phase
+        plot_mag = magnitude
+
     # Use a scatter plot. A continuous 3D line gets extremely messy when phase wraps from +pi to -pi
-    ax3d.scatter(freqs, phase, magnitude, s=2, c=magnitude, cmap='viridis', alpha=0.7)
+    ax3d.scatter(plot_freqs, plot_phase, plot_mag, s=2, c=plot_mag, cmap='viridis', alpha=0.7)
 
     ax3d.set_title("3D Frequency Spectrum\n(X: Freq | Y: Phase | Z: Magnitude)")
     ax3d.set_xlabel("Frequency (Hz)")
@@ -729,7 +745,7 @@ if app_mode == "📈 1D Signal Studio":
     ax3d.set_xlim(0, fs / 2)
     ax3d.set_ylim(-np.pi, np.pi)
 
-    plt.tight_layout()
+    # Note: tight_layout is deliberately omitted here, as it conflicts with 3D subplot constraints.
     st.pyplot(fig3d)
 
     buf3d = io.BytesIO()
@@ -801,8 +817,8 @@ if app_mode == "📈 1D Signal Studio":
     title = f"{family} {ftype}  cutoff={cutoff:.0f}Hz" + (f", {cutoff2:.0f}Hz" if needs_band else "")
 
     fig2, axs2 = plt.subplots(4, 1, figsize=(10, 12))
-    axs2[0].plot(t + trim_start, signal, label="Original", alpha=0.6)
-    axs2[0].plot(t + trim_start, filtered, label="Filtered", alpha=0.8)
+    axs2[0].plot(t, signal, label="Original", alpha=0.6)
+    axs2[0].plot(t, filtered, label="Filtered", alpha=0.8)
     axs2[0].set_title(title + " - Waveform")
     axs2[0].set_xlabel("Time (s)"); axs2[0].legend()
 
