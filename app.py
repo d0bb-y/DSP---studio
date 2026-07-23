@@ -671,9 +671,11 @@ if app_mode == "📈 1D Signal Studio":
     freqs = np.fft.rfftfreq(n, 1 / fs)
     
     if source == "Demo: Impulse (Delta) Signal":
-        magnitude = np.abs(np.fft.rfft(signal))
+        fft_complex = np.fft.rfft(signal)
+        magnitude = np.abs(fft_complex)
     else:
-        magnitude = np.abs(np.fft.rfft(signal)) / n
+        fft_complex = np.fft.rfft(signal)
+        magnitude = np.abs(fft_complex) / n
 
     st.header("Signal Analysis")
     fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
@@ -707,6 +709,37 @@ if app_mode == "📈 1D Signal Studio":
         file_name=f"signal_analysis.{graph_format}", mime=graph_mime
     )
     plt.close(fig1)
+
+    # --- NEW: 3D FFT SPECTRUM ---
+    st.subheader("3D FFT Spectrum (Magnitude & Phase)")
+    fig3d = plt.figure(figsize=(10, 8))
+    ax3d = fig3d.add_subplot(111, projection='3d')
+
+    # Extract phase from the complex FFT
+    phase = np.angle(fft_complex)
+
+    # Use a scatter plot. A continuous 3D line gets extremely messy when phase wraps from +pi to -pi
+    ax3d.scatter(freqs, phase, magnitude, s=2, c=magnitude, cmap='viridis', alpha=0.7)
+
+    ax3d.set_title("3D Frequency Spectrum\n(X: Freq | Y: Phase | Z: Magnitude)")
+    ax3d.set_xlabel("Frequency (Hz)")
+    ax3d.set_ylabel("Phase (Radians)")
+    ax3d.set_zlabel("Magnitude")
+    
+    ax3d.set_xlim(0, fs / 2)
+    ax3d.set_ylim(-np.pi, np.pi)
+
+    plt.tight_layout()
+    st.pyplot(fig3d)
+
+    buf3d = io.BytesIO()
+    fig3d.savefig(buf3d, format=graph_format)
+    st.download_button(
+        label=f"📥 Download 3D Spectrum Graph ({graph_format.upper()})", data=buf3d.getvalue(),
+        file_name=f"3d_fft_spectrum.{graph_format}", mime=graph_mime
+    )
+    plt.close(fig3d)
+    # ----------------------------
 
     st.header("Filter Design")
     c1, c2, c3 = st.columns(3)
