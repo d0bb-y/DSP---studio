@@ -363,6 +363,111 @@ def apply_filter(b, a, signal):
 
 
 # ============================================================================
+# TRANSFER FUNCTION EQUATION (LaTeX) - for the Pole-Zero display
+# ============================================================================
+# Turns (b, a) filter coefficients and their (z, p, k) zero-pole-gain form into
+# readable H(z) equations. Long filters (e.g. a 101-tap FIR) are truncated with
+# a "..." so the equation stays on-screen while remaining mathematically honest
+# about the omitted middle terms.
+
+def _tf_fmt_num(val, sig=4):
+    """Compactly format a real number for a LaTeX math string."""
+    val = float(val)
+    if not np.isfinite(val) or abs(val) < 1e-12:
+        return "0"
+    if abs(val - round(val)) < 1e-9 and abs(val) < 1e6:
+        return f"{int(round(val))}"
+    s = f"{val:.{sig}g}"
+    if 'e' in s:
+        mantissa, exp = s.split('e')
+        return f"{mantissa} \\times 10^{{{int(exp)}}}"
+    return s
+
+def _tf_fmt_complex(val, sig=4):
+    """Compactly format a (possibly complex) pole/zero for a LaTeX math string."""
+    val = complex(val)
+    re, im = val.real, val.imag
+    if abs(im) < 1e-9:
+        return _tf_fmt_num(re, sig)
+    re_s = _tf_fmt_num(re, sig)
+    im_s = _tf_fmt_num(abs(im), sig)
+    sign = "+" if im >= 0 else "-"
+    return f"({re_s} {sign} {im_s}i)"
+
+def _tf_poly_term(coef, power, var="z", is_first=False):
+    """One term of a polynomial in descending powers of var^-1, e.g. ' - 0.5z^{-2}'."""
+    sign = "-" if coef < 0 else "+"
+    mag_s = _tf_fmt_num(abs(coef))
+    if power == 0:
+        body = mag_s
+    else:
+        exp = "^{-1}" if power == 1 else f"^{{-{power}}}"
+        coef_part = "" if mag_s == "1" else mag_s
+        body = f"{coef_part}{var}{exp}"
+    if is_first:
+        return f"-{body}" if sign == "-" else body
+    return f" {sign} {body}"
+
+def build_poly_latex(coeffs, var="z", max_head=4):
+    """LaTeX for b0 + b1 z^-1 + ... + bN z^-N. Long polynomials truncate with '...',
+    keeping the true final term so the order is still visible."""
+    coeffs = list(coeffs)
+    if len(coeffs) == 0:
+        return "0"
+    items = [(i, c) for i, c in enumerate(coeffs) if abs(c) > 1e-12]
+    if not items:
+        return "0"
+    if len(items) <= 2 * max_head + 2:
+        parts = [_tf_poly_term(c, i, var, idx == 0) for idx, (i, c) in enumerate(items)]
+        return "".join(parts).strip()
+    head_items = items[:max_head]
+    tail_i, tail_c = items[-1]
+    head = "".join(_tf_poly_term(c, i, var, idx == 0) for idx, (i, c) in enumerate(head_items))
+    tail = _tf_poly_term(tail_c, tail_i, var, False)
+    return f"{head} + \\cdots{tail}".strip()
+
+def build_factor_latex(roots, var="z", max_head=3):
+    """LaTeX for (z - r0)(z - r1)...(z - rN), truncating with '...' for many roots."""
+    roots = list(roots)
+    n = len(roots)
+    if n == 0:
+        return "1"
+    def factor(r):
+        rs = _tf_fmt_complex(r)
+        if rs.startswith("-"):
+            return f"({var} + {rs[1:]})"
+        return f"({var} - {rs})"
+    if n <= 2 * max_head + 1:
+        return "".join(factor(r) for r in roots)
+    head = "".join(factor(r) for r in roots[:max_head])
+    return f"{head} \\cdots {factor(roots[-1])}"
+
+def format_tf_polynomial_latex(b, a):
+    """H(z) as a ratio of polynomials in z^-1, straight from the filter coefficients."""
+    num = build_poly_latex(b)
+    a_arr = np.asarray(a, dtype=float)
+    if len(a_arr) == 1 and abs(a_arr[0] - 1.0) < 1e-9:
+        return f"H(z) = {num}"
+    den = build_poly_latex(a)
+    return f"H(z) = \\dfrac{{{num}}}{{{den}}}"
+
+def format_tf_zpk_latex(z, p, k):
+    """H(z) in factored zero-pole-gain form, matching whatever is plotted in the Z-plane."""
+    num = build_factor_latex(z)
+    den = build_factor_latex(p)
+    k_val = float(np.real(k))
+    if abs(k_val - 1.0) < 1e-9:
+        prefix = ""
+    elif abs(k_val + 1.0) < 1e-9:
+        prefix = "-"
+    else:
+        prefix = f"{_tf_fmt_num(k_val)} \\cdot "
+    if len(p) == 0:
+        return f"H(z) = {prefix}{num}"
+    return f"H(z) = {prefix}\\dfrac{{{num}}}{{{den}}}"
+
+
+# ============================================================================
 # 2D IMAGE DSP ENGINE 
 # ============================================================================
 
@@ -847,6 +952,20 @@ if app_mode == "📈 1D Signal Studio":
 
     plt.tight_layout()
     st.pyplot(fig2)
+
+    # --- Transfer function equation, shown directly below the Pole-Zero plot ---
+    st.subheader("Transfer Function")
+    tf_order = max(len(b), len(a)) - 1
+    st.caption(f"{family} {ftype} filter · order {tf_order} · {len(z)} zero(s) · {len(p)} pole(s)")
+
+    st.markdown("**Direct form** (from the filter coefficients `b`, `a`):")
+    st.latex(format_tf_polynomial_latex(b, a))
+
+    st.markdown("**Zero-Pole-Gain form** (matches the Z-plane plot above):")
+    st.latex(format_tf_zpk_latex(z, p, k))
+
+    if len(b) > 10 or len(a) > 10 or len(z) > 7 or len(p) > 7:
+        st.caption("⋯ marks omitted middle terms so the equation stays readable — the filter itself still uses every coefficient.")
 
     buf2 = io.BytesIO()
     fig2.savefig(buf2, format=graph_format)
