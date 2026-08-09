@@ -2,5 +2,6 @@ streamlit
 numpy
 scipy
 matplotlib
+Pillow
 h5py
 pyedflib
