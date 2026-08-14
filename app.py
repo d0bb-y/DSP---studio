@@ -17,7 +17,6 @@ import json
 
 import numpy as np
 import matplotlib.pyplot as plt
-import plotly.graph_objects as go
 import streamlit as st
 import streamlit.components.v1 as components
 from scipy.io import wavfile, loadmat
@@ -66,7 +65,6 @@ def _header_skip_count(filename, delim):
     return 0
 
 def _fill_nans(arr, label="data"):
-    """Interpolates ISOLATED missing (NaN) values."""
     mask = np.isnan(arr)
     n_missing = int(mask.sum())
     if n_missing == 0:
@@ -539,6 +537,278 @@ def apply_dilation(image_array, size):
 
 
 # ============================================================================
+# 🌟 THREE.JS WEBGL HARDWARE-ACCELERATED 3D SPECTRUM EMBED (EXACT MATCH)
+# ============================================================================
+
+def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
+    """Renders the exact WebGL Three.js Particle Cloud with Additive Blending & Auto-Rotation."""
+    n_points = len(freqs)
+    if n_points > 3000:
+        top_indices = np.argsort(magnitude)[-3000:]
+        plot_f = freqs[top_indices].tolist()
+        plot_p = phase[top_indices].tolist()
+        plot_m = magnitude[top_indices].tolist()
+    else:
+        plot_f = freqs.tolist()
+        plot_p = phase.tolist()
+        plot_m = magnitude.tolist()
+
+    max_mag = float(np.max(magnitude)) if len(magnitude) > 0 else 1.0
+
+    payload = json.dumps({
+        "freqs": plot_f,
+        "phase": plot_p,
+        "magnitude": plot_m,
+        "maxMag": max_mag,
+        "fs": float(fs)
+    })
+
+    html_code = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8" />
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+      <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+        body {{ background-color: #030712; color: #f8fafc; overflow: hidden; }}
+        #container {{ width: 100%; height: 480px; position: relative; border-radius: 16px; overflow: hidden; border: 1px solid #1e293b; background: #030712; }}
+        #toolbar {{ position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; z-index: 10; }}
+        .btn {{
+          background: rgba(15, 23, 42, 0.85);
+          color: #94a3b8;
+          border: 1px solid #334155;
+          padding: 6px 10px;
+          border-radius: 8px;
+          font-size: 12px;
+          font-weight: 500;
+          cursor: pointer;
+          backdrop-filter: blur(8px);
+          transition: all 0.2s ease;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }}
+        .btn:hover {{ color: #38bdf8; border-color: #38bdf8; background: rgba(30, 41, 59, 0.95); }}
+        .btn.active {{ background: rgba(6, 182, 212, 0.2); color: #38bdf8; border-color: rgba(6, 182, 212, 0.4); }}
+        #legend {{
+          position: absolute;
+          bottom: 12px;
+          left: 16px;
+          right: 16px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 11px;
+          color: #64748b;
+          pointer-events: none;
+        }}
+        .legend-items {{ display: flex; gap: 14px; align-items: center; }}
+        .item {{ display: flex; align-items: center; gap: 5px; }}
+        .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; }}
+        canvas {{ display: block; width: 100%; height: 100%; cursor: grab; }}
+        canvas:active {{ cursor: grabbing; }}
+      </style>
+    </head>
+    <body>
+      <div id="container">
+        <div id="toolbar">
+          <button id="btn-rotate" class="btn active" onclick="toggleRotate()">⟳ Auto-Rotate</button>
+          <button class="btn" onclick="zoom(-2)">+ Zoom</button>
+          <button class="btn" onclick="zoom(2)">- Zoom</button>
+          <button class="btn" onclick="resetView()">Reset</button>
+        </div>
+
+        <div id="canvas-wrapper" style="width: 100%; height: 100%;"></div>
+
+        <div id="legend">
+          <div class="legend-items">
+            <div class="item"><span class="dot" style="background: #4f46e5;"></span> Low Magnitude</div>
+            <div class="item"><span class="dot" style="background: #10b981;"></span> Medium Energy</div>
+            <div class="item"><span class="dot" style="background: #eab308;"></span> Peak Resonances</div>
+          </div>
+          <div>💡 Click & drag to rotate • Scroll wheel to zoom</div>
+        </div>
+      </div>
+
+      <script>
+        const data = {payload};
+        const container = document.getElementById('canvas-wrapper');
+        const width = container.clientWidth || 700;
+        const height = 480;
+
+        let isRotating = true;
+        let isDragging = false;
+        let prevMouse = {{ x: 0, y: 0 }};
+        let rotation = {{ x: 0.35, y: -0.6 }};
+        let zoomDist = 14;
+
+        // 1. Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x030712);
+
+        // 2. Camera setup
+        const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+        camera.position.set(0, 0, zoomDist);
+
+        // 3. Renderer setup
+        const renderer = new THREE.WebGLRenderer({{ antialias: true, preserveDrawingBuffer: true }});
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        container.appendChild(renderer.domElement);
+
+        // 4. Object Group
+        const rootGroup = new THREE.Group();
+        scene.add(rootGroup);
+
+        const boxSize = 8;
+        const halfBox = boxSize / 2;
+
+        // Cyan Floor Grid
+        const gridHelper = new THREE.GridHelper(boxSize, 10, 0x38bdf8, 0x1e293b);
+        gridHelper.position.y = -halfBox;
+        rootGroup.add(gridHelper);
+
+        // Box Outline Wireframe
+        const boxGeom = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
+        const boxEdges = new THREE.EdgesGeometry(boxGeom);
+        const boxLine = new THREE.LineSegments(
+          boxEdges,
+          new THREE.LineBasicMaterial({{ color: 0x334155, transparent: true, opacity: 0.45 }})
+        );
+        rootGroup.add(boxLine);
+
+        // Viridis colormap approximation
+        function viridisColor(t) {{
+          const c = Math.max(0, Math.min(1, t));
+          const r = Math.max(0, Math.min(1, -0.05 + 1.25 * c - 0.2 * c * c));
+          const g = Math.max(0, Math.min(1, 0.05 + 1.4 * c - 0.5 * c * c));
+          const b = Math.max(0, Math.min(1, 0.5 + 0.8 * c - 0.8 * c * c));
+          return new THREE.Color(r, g, b);
+        }}
+
+        // Populate Spectral Harmonics
+        const nyq = data.fs / 2 || 1;
+        const maxMag = data.maxMag || 1e-6;
+        const positions = [];
+        const colors = [];
+
+        for (let i = 0; i < data.freqs.length; i++) {{
+          const f = data.freqs[i];
+          const p = data.phase[i];
+          const m = data.magnitude[i];
+
+          const x = (f / nyq) * boxSize - halfBox;
+          const y = (p / Math.PI) * halfBox;
+          const z = (m / maxMag) * boxSize - halfBox;
+
+          positions.push(x, z, y); // Height mapped to magnitude
+
+          const col = viridisColor(m / maxMag);
+          colors.push(col.r, col.g, col.b);
+        }}
+
+        const particlesGeom = new THREE.BufferGeometry();
+        particlesGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+        particlesGeom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+
+        // Soft Radial Glow Particle Texture
+        const pCanvas = document.createElement('canvas');
+        pCanvas.width = 32;
+        pCanvas.height = 32;
+        const ctx = pCanvas.getContext('2d');
+        const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
+        grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.7)');
+        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 32, 32);
+
+        const texture = new THREE.CanvasTexture(pCanvas);
+        const particlesMat = new THREE.PointsMaterial({{
+          size: 0.26,
+          vertexColors: true,
+          map: texture,
+          transparent: true,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }});
+
+        const pointCloud = new THREE.Points(particlesGeom, particlesMat);
+        rootGroup.add(pointCloud);
+
+        // Interaction
+        const dom = renderer.domElement;
+        dom.addEventListener('pointerdown', (e) => {{
+          isDragging = true;
+          prevMouse = {{ x: e.clientX, y: e.clientY }};
+        }});
+
+        window.addEventListener('pointermove', (e) => {{
+          if (!isDragging) return;
+          const dx = e.clientX - prevMouse.x;
+          const dy = e.clientY - prevMouse.y;
+          prevMouse = {{ x: e.clientX, y: e.clientY }};
+          rotation.y += dx * 0.008;
+          rotation.x += dy * 0.008;
+        }});
+
+        window.addEventListener('pointerup', () => {{ isDragging = false; }});
+
+        dom.addEventListener('wheel', (e) => {{
+          e.preventDefault();
+          zoomDist = Math.max(5, Math.min(32, zoomDist + e.deltaY * 0.02));
+        }}, {{ passive: false }});
+
+        function toggleRotate() {{
+          isRotating = !isRotating;
+          document.getElementById('btn-rotate').classList.toggle('active', isRotating);
+        }}
+
+        function zoom(delta) {{
+          zoomDist = Math.max(5, Math.min(32, zoomDist + delta));
+        }}
+
+        function resetView() {{
+          rotation = {{ x: 0.35, y: -0.6 }};
+          zoomDist = 14;
+        }}
+
+        // Animation Loop
+        let lastTime = performance.now();
+        function animate() {{
+          requestAnimationFrame(animate);
+          const now = performance.now();
+          const dt = (now - lastTime) / 1000;
+          lastTime = now;
+
+          if (isRotating && !isDragging) {{
+            rotation.y += dt * 0.35;
+          }}
+
+          rootGroup.rotation.x = rotation.x;
+          rootGroup.rotation.y = rotation.y;
+          camera.position.set(0, 0, zoomDist);
+
+          renderer.render(scene, camera);
+        }}
+
+        animate();
+
+        window.addEventListener('resize', () => {{
+          const newW = container.clientWidth || 700;
+          camera.aspect = newW / height;
+          camera.updateProjectionMatrix();
+          renderer.setSize(newW, height);
+        }});
+      </script>
+    </body>
+    </html>
+    """
+    components.html(html_code, height=520)
+
+
+# ============================================================================
 # WEB UI
 # ============================================================================
 
@@ -796,141 +1066,11 @@ if app_mode == "📈 1D Signal Studio":
     plt.close(fig1)
 
     # ========================================================================
-    # 🌟 UPGRADED: 3D FFT SPECTRUM LANDSCAPE WITH STEM LINES & WEBGL ENGINE
+    # 🌟 3D FFT SPECTRUM LANDSCAPE (THREE.JS HARDWARE-ACCELERATED WEBGL)
     # ========================================================================
-    st.subheader("3D FFT Spectrum Landscape (Magnitude & Phase)")
-    st.caption("🖱️ Click & drag to orbit in 3D • Scroll wheel to zoom • Hover over points for exact Hz/rad values")
-
+    st.subheader("3D FFT Spectrum Landscape")
     phase = np.angle(fft_complex)
-
-    # TOP-K PEAK SAMPLING (Guarantees major harmonics are never lost)
-    n_points = len(freqs)
-    if n_points > 2500:
-        top_indices = np.argsort(magnitude)[-2500:]
-        top_indices = np.sort(top_indices)  # preserve frequency ordering
-        plot_freqs = freqs[top_indices]
-        plot_phase = phase[top_indices]
-        plot_mag = magnitude[top_indices]
-    else:
-        plot_freqs = freqs
-        plot_phase = phase
-        plot_mag = magnitude
-
-    # Build 3D Stem Line segments from floor (Z=0) up to peak magnitude
-    # Using None-separated array segments renders hundreds of 3D lines in a single fast WebGL draw call!
-    stem_x = []
-    stem_y = []
-    stem_z = []
-    stem_colors = []
-
-    # Drop lines for significant harmonics (top 200 highest peaks get beautiful vertical pillars)
-    sig_threshold = np.max(plot_mag) * 0.03
-    for f, p, m in zip(plot_freqs, plot_phase, plot_mag):
-        if m >= sig_threshold:
-            stem_x.extend([f, f, None])
-            stem_y.extend([p, p, None])
-            stem_z.extend([0, m, None])
-
-    fig3d = go.Figure()
-
-    # 1. Add Stem Drop Lines (Pillars from base plane to magnitude peaks)
-    if len(stem_x) > 0:
-        fig3d.add_trace(go.Scatter3d(
-            x=stem_x,
-            y=stem_y,
-            z=stem_z,
-            mode="lines",
-            line=dict(color="rgba(56, 189, 248, 0.45)", width=2),
-            hoverinfo="none",
-            showlegend=False,
-            name="Harmonic Stems"
-        ))
-
-    # 2. Add Floor Shadow Projection (Zero-Magnitude Base Shadow)
-    fig3d.add_trace(go.Scatter3d(
-        x=plot_freqs,
-        y=plot_phase,
-        z=np.zeros_like(plot_mag),
-        mode="markers",
-        marker=dict(
-            size=2,
-            color="rgba(30, 41, 59, 0.7)",
-            symbol="circle"
-        ),
-        hoverinfo="none",
-        showlegend=False,
-        name="Floor Shadow"
-    ))
-
-    # 3. Main Harmonic Spectrum Peaks (Vibrant glowing spheres with Viridis energy colormap)
-    fig3d.add_trace(go.Scatter3d(
-        x=plot_freqs,
-        y=plot_phase,
-        z=plot_mag,
-        mode="markers",
-        marker=dict(
-            size=4.5,
-            color=plot_mag,
-            colorscale="Viridis",
-            opacity=0.95,
-            showscale=True,
-            colorbar=dict(
-                title=dict(text="Magnitude |X(f)|", font=dict(color="#94a3b8", size=12)),
-                orientation="h",
-                y=-0.12,
-                x=0.5,
-                xanchor="center",
-                len=0.7,
-                thickness=14,
-                tickfont=dict(color="#cbd5e1", size=10)
-            ),
-        ),
-        name="Spectral Peak",
-        hovertemplate="<b>Frequency:</b> %{x:.1f} Hz<br><b>Phase:</b> %{y:.3f} rad<br><b>Magnitude:</b> %{z:.5f}<extra></extra>",
-        showlegend=False,
-    ))
-
-    # Cyberpunk / Slate Deep-Dark 3D Layout Theme
-    fig3d.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="#030712",
-        plot_bgcolor="#030712",
-        scene=dict(
-            xaxis=dict(
-                title=dict(text="Frequency (Hz)", font=dict(color="#38bdf8", size=12)),
-                range=[0, fs / 2],
-                backgroundcolor="#090d16",
-                gridcolor="#1e293b",
-                showbackground=True,
-                zerolinecolor="#334155"
-            ),
-            yaxis=dict(
-                title=dict(text="Phase (rad)", font=dict(color="#a855f7", size=12)),
-                range=[-np.pi, np.pi],
-                backgroundcolor="#090d16",
-                gridcolor="#1e293b",
-                showbackground=True,
-                zerolinecolor="#334155"
-            ),
-            zaxis=dict(
-                title=dict(text="Magnitude |X(f)|", font=dict(color="#10b981", size=12)),
-                backgroundcolor="#090d16",
-                gridcolor="#1e293b",
-                showbackground=True,
-                zerolinecolor="#334155"
-            ),
-            camera=dict(
-                eye=dict(x=1.65, y=-1.65, z=1.2),
-                center=dict(x=0, y=0, z=-0.1)
-            ),
-            aspectmode="manual",
-            aspectratio=dict(x=1.4, y=1.0, z=0.75)
-        ),
-        margin=dict(l=0, r=0, b=10, t=10),
-        height=620,
-    )
-
-    st.plotly_chart(fig3d, use_container_width=True)
+    render_exact_threejs_spectrum(freqs, phase, magnitude, fs)
     # ========================================================================
 
     st.header("Filter Design")
@@ -1024,7 +1164,6 @@ if app_mode == "📈 1D Signal Studio":
     plt.tight_layout()
     st.pyplot(fig2)
 
-    # Transfer function equations
     st.subheader("Transfer Function")
     tf_order = max(len(b), len(a)) - 1
     st.caption(f"{family} {ftype} filter · order {tf_order} · {len(z)} zero(s) · {len(p)} pole(s)")
