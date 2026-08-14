@@ -3,8 +3,7 @@ Universal DSP Signal Analyzer & Filter Design Studio - Web App
 ----------------------------------------------------------------
 Run locally:    streamlit run app.py
 Deploy free:    push this file + requirements.txt to a GitHub repo,
-                then deploy at https://share.streamlit.io (Streamlit
-                Community Cloud reads requirements.txt automatically).
+                then deploy at https://share.streamlit.io
 """
 
 import os
@@ -14,17 +13,19 @@ import tempfile
 import io
 import urllib.request
 import uuid
+import json
 
 import numpy as np
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as components
 from scipy.io import wavfile, loadmat
 from scipy.signal import spectrogram, firwin, butter, lfilter, filtfilt, freqz, square, sawtooth, chirp, tf2zpk
 from scipy import ndimage
 from PIL import Image
 
-st.set_page_config(page_title="DSP Signal Analyzer", layout="wide")
+st.set_page_config(page_title="Universal DSP Signal Analyzer", layout="wide", initial_sidebar_state="expanded")
 
 # ============================================================================
 # DSP ENGINE - Pure Logic (No Streamlit UI inside these functions)
@@ -65,8 +66,7 @@ def _header_skip_count(filename, delim):
     return 0
 
 def _fill_nans(arr, label="data"):
-    """Interpolates ISOLATED missing (NaN) values. Refuses to guess if too much
-    of the column is missing."""
+    """Interpolates ISOLATED missing (NaN) values."""
     mask = np.isnan(arr)
     n_missing = int(mask.sum())
     if n_missing == 0:
@@ -84,7 +84,6 @@ def _fill_nans(arr, label="data"):
     return arr, n_missing
 
 def load_csv_signal(filename, fs_override=None):
-    """Returns (fs, signal, n_interpolated)."""
     delim = _detect_delimiter(filename)
     skip = _header_skip_count(filename, delim)
     try:
@@ -311,8 +310,6 @@ def load_edf_signal(filename, channel=0):
     return fs, filled.astype(np.float32), n_missing
 
 def load_any_signal(filename, fs_override=None, mat_var_name=None, edf_channel=0):
-    """Always returns (fs, signal, n_interpolated, warning) - the last two are
-    0/None for loaders that don't have those concepts (wav/edf)."""
     ext = os.path.splitext(filename)[1].lower()
     if ext == '.wav':
         fs, sig = load_wav_signal(filename)
@@ -355,24 +352,15 @@ def design_iir(filter_type, fs, cutoff, cutoff2=None, order=4):
     return b, a
 
 def apply_filter(b, a, signal):
-    """Applies filter and returns (filtered_signal, fallback_warning_flag)"""
     padlen = 3 * max(len(a), len(b))
     if len(signal) > padlen:
         return filtfilt(b, a, signal), False
-    # If signal is too short for zero-phase filtfilt, fallback to lfilter
     return lfilter(b, a, signal), True
 
-
 # ============================================================================
-# TRANSFER FUNCTION EQUATION (LaTeX) - for the Pole-Zero display
+# TRANSFER FUNCTION EQUATION (LaTeX)
 # ============================================================================
-# Turns (b, a) filter coefficients and their (z, p, k) zero-pole-gain form into
-# readable H(z) equations. Long filters (e.g. a 101-tap FIR) are truncated with
-# a "..." so the equation stays on-screen while remaining mathematically honest
-# about the omitted middle terms.
-
 def _tf_fmt_num(val, sig=4):
-    """Compactly format a real number for a LaTeX math string."""
     val = float(val)
     if not np.isfinite(val) or abs(val) < 1e-12:
         return "0"
@@ -385,7 +373,6 @@ def _tf_fmt_num(val, sig=4):
     return s
 
 def _tf_fmt_complex(val, sig=4):
-    """Compactly format a (possibly complex) pole/zero for a LaTeX math string."""
     val = complex(val)
     re, im = val.real, val.imag
     if abs(im) < 1e-9:
@@ -396,7 +383,6 @@ def _tf_fmt_complex(val, sig=4):
     return f"({re_s} {sign} {im_s}i)"
 
 def _tf_poly_term(coef, power, var="z", is_first=False):
-    """One term of a polynomial in descending powers of var^-1, e.g. ' - 0.5z^{-2}'."""
     sign = "-" if coef < 0 else "+"
     mag_s = _tf_fmt_num(abs(coef))
     if power == 0:
@@ -410,8 +396,6 @@ def _tf_poly_term(coef, power, var="z", is_first=False):
     return f" {sign} {body}"
 
 def build_poly_latex(coeffs, var="z", max_head=4):
-    """LaTeX for b0 + b1 z^-1 + ... + bN z^-N. Long polynomials truncate with '...',
-    keeping the true final term so the order is still visible."""
     coeffs = list(coeffs)
     if len(coeffs) == 0:
         return "0"
@@ -428,7 +412,6 @@ def build_poly_latex(coeffs, var="z", max_head=4):
     return f"{head} + \\cdots{tail}".strip()
 
 def build_factor_latex(roots, var="z", max_head=3):
-    """LaTeX for (z - r0)(z - r1)...(z - rN), truncating with '...' for many roots."""
     roots = list(roots)
     n = len(roots)
     if n == 0:
@@ -444,7 +427,6 @@ def build_factor_latex(roots, var="z", max_head=3):
     return f"{head} \\cdots {factor(roots[-1])}"
 
 def format_tf_polynomial_latex(b, a):
-    """H(z) as a ratio of polynomials in z^-1, straight from the filter coefficients."""
     num = build_poly_latex(b)
     a_arr = np.asarray(a, dtype=float)
     if len(a_arr) == 1 and abs(a_arr[0] - 1.0) < 1e-9:
@@ -453,7 +435,6 @@ def format_tf_polynomial_latex(b, a):
     return f"H(z) = \\dfrac{{{num}}}{{{den}}}"
 
 def format_tf_zpk_latex(z, p, k):
-    """H(z) in factored zero-pole-gain form, matching whatever is plotted in the Z-plane."""
     num = build_factor_latex(z)
     den = build_factor_latex(p)
     k_val = float(np.real(k))
@@ -467,11 +448,9 @@ def format_tf_zpk_latex(z, p, k):
         return f"H(z) = {prefix}{num}"
     return f"H(z) = {prefix}\\dfrac{{{num}}}{{{den}}}"
 
-
 # ============================================================================
 # 2D IMAGE DSP ENGINE 
 # ============================================================================
-
 @st.cache_data(show_spinner=False)
 def load_image_array(image_bytes):
     pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -711,7 +690,6 @@ if app_mode == "📈 1D Signal Studio":
         "Select time range (seconds)", min_value=0.0, max_value=full_duration, value=(0.0, full_duration)
     )
 
-    # FIX 2: Added integer boundary check to prevent zero-length array ValueErrors
     start_sample = int(trim_start * fs)
     end_sample = int(trim_end * fs)
     if end_sample > start_sample:
@@ -756,7 +734,6 @@ if app_mode == "📈 1D Signal Studio":
 
     if equation:
         st.markdown("### Signal Equation")
-        # FIX 3: Added 'r' string formatting to prevent 3.12+ syntax warnings
         st.markdown(rf"$\displaystyle {equation}$")
 
     st.header("Signal Metrics & Statistics")
@@ -818,19 +795,19 @@ if app_mode == "📈 1D Signal Studio":
     )
     plt.close(fig1)
 
-    # --- NEW: 3D FFT SPECTRUM ---
-    st.subheader("3D FFT Spectrum (Magnitude & Phase)")
-    st.caption("🖱️ Click & drag to rotate • Scroll wheel to zoom")
+    # ========================================================================
+    # 🌟 UPGRADED: 3D FFT SPECTRUM LANDSCAPE WITH STEM LINES & WEBGL ENGINE
+    # ========================================================================
+    st.subheader("3D FFT Spectrum Landscape (Magnitude & Phase)")
+    st.caption("🖱️ Click & drag to orbit in 3D • Scroll wheel to zoom • Hover over points for exact Hz/rad values")
 
-    # Extract phase from the complex FFT
     phase = np.angle(fft_complex)
 
-    # FIX 1: THE 3D SCATTER "TOP-K" FIX
-    # Protects RAM from 1.3+ million points while guaranteeing the highest peaks 
-    # are NEVER accidentally decimated away, keeping the 2D and 3D graphs perfectly aligned.
+    # TOP-K PEAK SAMPLING (Guarantees major harmonics are never lost)
     n_points = len(freqs)
-    if n_points > 3000:
-        top_indices = np.argsort(magnitude)[-3000:]
+    if n_points > 2500:
+        top_indices = np.argsort(magnitude)[-2500:]
+        top_indices = np.sort(top_indices)  # preserve frequency ordering
         plot_freqs = freqs[top_indices]
         plot_phase = phase[top_indices]
         plot_mag = magnitude[top_indices]
@@ -839,69 +816,122 @@ if app_mode == "📈 1D Signal Studio":
         plot_phase = phase
         plot_mag = magnitude
 
+    # Build 3D Stem Line segments from floor (Z=0) up to peak magnitude
+    # Using None-separated array segments renders hundreds of 3D lines in a single fast WebGL draw call!
+    stem_x = []
+    stem_y = []
+    stem_z = []
+    stem_colors = []
+
+    # Drop lines for significant harmonics (top 200 highest peaks get beautiful vertical pillars)
+    sig_threshold = np.max(plot_mag) * 0.03
+    for f, p, m in zip(plot_freqs, plot_phase, plot_mag):
+        if m >= sig_threshold:
+            stem_x.extend([f, f, None])
+            stem_y.extend([p, p, None])
+            stem_z.extend([0, m, None])
+
     fig3d = go.Figure()
 
-    # Main interactive point cloud. A continuous 3D line gets extremely messy
-    # when phase wraps from +pi to -pi, so markers-only, same as before.
+    # 1. Add Stem Drop Lines (Pillars from base plane to magnitude peaks)
+    if len(stem_x) > 0:
+        fig3d.add_trace(go.Scatter3d(
+            x=stem_x,
+            y=stem_y,
+            z=stem_z,
+            mode="lines",
+            line=dict(color="rgba(56, 189, 248, 0.45)", width=2),
+            hoverinfo="none",
+            showlegend=False,
+            name="Harmonic Stems"
+        ))
+
+    # 2. Add Floor Shadow Projection (Zero-Magnitude Base Shadow)
+    fig3d.add_trace(go.Scatter3d(
+        x=plot_freqs,
+        y=plot_phase,
+        z=np.zeros_like(plot_mag),
+        mode="markers",
+        marker=dict(
+            size=2,
+            color="rgba(30, 41, 59, 0.7)",
+            symbol="circle"
+        ),
+        hoverinfo="none",
+        showlegend=False,
+        name="Floor Shadow"
+    ))
+
+    # 3. Main Harmonic Spectrum Peaks (Vibrant glowing spheres with Viridis energy colormap)
     fig3d.add_trace(go.Scatter3d(
         x=plot_freqs,
         y=plot_phase,
         z=plot_mag,
         mode="markers",
         marker=dict(
-            size=3,
+            size=4.5,
             color=plot_mag,
             colorscale="Viridis",
-            opacity=0.8,
+            opacity=0.95,
+            showscale=True,
             colorbar=dict(
-                title="Magnitude",
+                title=dict(text="Magnitude |X(f)|", font=dict(color="#94a3b8", size=12)),
                 orientation="h",
-                y=-0.2,
+                y=-0.12,
                 x=0.5,
                 xanchor="center",
-                len=0.75,
+                len=0.7,
+                thickness=14,
+                tickfont=dict(color="#cbd5e1", size=10)
             ),
         ),
-        name="Spectrum",
-        hovertemplate="Freq: %{x:.1f} Hz<br>Phase: %{y:.2f} rad<br>Mag: %{z:.4f}<extra></extra>",
+        name="Spectral Peak",
+        hovertemplate="<b>Frequency:</b> %{x:.1f} Hz<br><b>Phase:</b> %{y:.3f} rad<br><b>Magnitude:</b> %{z:.5f}<extra></extra>",
         showlegend=False,
     ))
 
-    # Dummy (invisible) traces purely to render a custom categorical legend.
-    for label, color in [
-        ("Low Magnitude", "purple"),
-        ("Medium Energy", "teal"),
-        ("Peak Resonances", "yellow"),
-    ]:
-        fig3d.add_trace(go.Scatter3d(
-            x=[None], y=[None], z=[None],
-            mode="markers",
-            marker=dict(size=8, color=color),
-            name=label,
-            showlegend=True,
-        ))
-
+    # Cyberpunk / Slate Deep-Dark 3D Layout Theme
     fig3d.update_layout(
         template="plotly_dark",
+        paper_bgcolor="#030712",
+        plot_bgcolor="#030712",
         scene=dict(
-            xaxis=dict(title="Frequency (Hz)", range=[0, fs / 2]),
-            yaxis=dict(title="Phase (Radians)", range=[-np.pi, np.pi]),
-            zaxis=dict(title="Magnitude"),
+            xaxis=dict(
+                title=dict(text="Frequency (Hz)", font=dict(color="#38bdf8", size=12)),
+                range=[0, fs / 2],
+                backgroundcolor="#090d16",
+                gridcolor="#1e293b",
+                showbackground=True,
+                zerolinecolor="#334155"
+            ),
+            yaxis=dict(
+                title=dict(text="Phase (rad)", font=dict(color="#a855f7", size=12)),
+                range=[-np.pi, np.pi],
+                backgroundcolor="#090d16",
+                gridcolor="#1e293b",
+                showbackground=True,
+                zerolinecolor="#334155"
+            ),
+            zaxis=dict(
+                title=dict(text="Magnitude |X(f)|", font=dict(color="#10b981", size=12)),
+                backgroundcolor="#090d16",
+                gridcolor="#1e293b",
+                showbackground=True,
+                zerolinecolor="#334155"
+            ),
+            camera=dict(
+                eye=dict(x=1.65, y=-1.65, z=1.2),
+                center=dict(x=0, y=0, z=-0.1)
+            ),
+            aspectmode="manual",
+            aspectratio=dict(x=1.4, y=1.0, z=0.75)
         ),
-        legend=dict(
-            orientation="h",
-            yanchor="top",
-            y=-0.35,
-            xanchor="center",
-            x=0.5,
-        ),
-        margin=dict(l=0, r=0, b=0, t=30),
-        height=700,
-        autosize=True,
+        margin=dict(l=0, r=0, b=10, t=10),
+        height=620,
     )
 
     st.plotly_chart(fig3d, use_container_width=True)
-    # ----------------------------
+    # ========================================================================
 
     st.header("Filter Design")
     c1, c2, c3 = st.columns(3)
@@ -994,7 +1024,7 @@ if app_mode == "📈 1D Signal Studio":
     plt.tight_layout()
     st.pyplot(fig2)
 
-    # --- Transfer function equation, shown directly below the Pole-Zero plot ---
+    # Transfer function equations
     st.subheader("Transfer Function")
     tf_order = max(len(b), len(a)) - 1
     st.caption(f"{family} {ftype} filter · order {tf_order} · {len(z)} zero(s) · {len(p)} pole(s)")
@@ -1057,7 +1087,6 @@ if app_mode == "📈 1D Signal Studio":
             label=f"🎵 Download Filtered Audio ({audio_format.upper()})", data=audio_data,
             file_name=f"filtered_audio.{audio_format}", mime=audio_mime
         )
-
 
 # ============================================================================
 # 2D IMAGE STUDIO
