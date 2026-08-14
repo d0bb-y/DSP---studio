@@ -537,11 +537,10 @@ def apply_dilation(image_array, size):
 
 
 # ============================================================================
-# 🌟 THREE.JS WEBGL HARDWARE-ACCELERATED 3D SPECTRUM EMBED (EXACT MATCH)
+# 🌟 THREE.JS WEBGL 3D SPECTRUM (PERFECT ALIGNMENT & RESPONSIVE ZOOM)
 # ============================================================================
 
 def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
-    """Renders the exact WebGL Three.js Particle Cloud with Additive Blending & Auto-Rotation."""
     n_points = len(freqs)
     if n_points > 3000:
         top_indices = np.argsort(magnitude)[-3000:]
@@ -568,90 +567,230 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
     <html>
     <head>
       <meta charset="utf-8" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
       <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
       <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
         body {{ background-color: #030712; color: #f8fafc; overflow: hidden; }}
-        #container {{ width: 100%; height: 480px; position: relative; border-radius: 16px; overflow: hidden; border: 1px solid #1e293b; background: #030712; }}
-        #toolbar {{ position: absolute; top: 12px; right: 12px; display: flex; gap: 6px; z-index: 10; }}
+        
+        #card {{
+          position: relative;
+          width: 100%;
+          height: 520px;
+          border-radius: 16px;
+          border: 1px solid #1e293b;
+          background: #030712;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }}
+
+        /* TOP HEADER & AXIS LABELS */
+        #header {{
+          padding: 12px 16px 8px 16px;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          border-bottom: 1px solid rgba(30, 41, 59, 0.6);
+          background: rgba(3, 7, 18, 0.85);
+          backdrop-filter: blur(10px);
+          z-index: 10;
+        }}
+
+        .header-left {{
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-wrap: wrap;
+        }}
+
+        .pulse-dot {{
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #38bdf8;
+          box-shadow: 0 0 10px #38bdf8;
+        }}
+
+        .axis-badge {{
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+          font-size: 11px;
+          font-weight: 600;
+          color: #38bdf8;
+          background: rgba(6, 182, 212, 0.12);
+          border: 1px solid rgba(6, 182, 212, 0.35);
+          padding: 3px 8px;
+          border-radius: 9999px;
+          white-space: nowrap;
+        }}
+
+        /* BUTTON TOOLBAR */
+        #toolbar {{
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          flex-wrap: nowrap;
+        }}
+
         .btn {{
-          background: rgba(15, 23, 42, 0.85);
+          background: #0f172a;
           color: #94a3b8;
           border: 1px solid #334155;
-          padding: 6px 10px;
-          border-radius: 8px;
-          font-size: 12px;
+          padding: 5px 9px;
+          border-radius: 7px;
+          font-size: 11px;
           font-weight: 500;
           cursor: pointer;
-          backdrop-filter: blur(8px);
           transition: all 0.2s ease;
-          display: flex;
+          display: inline-flex;
           align-items: center;
           gap: 4px;
+          white-space: nowrap;
+          user-select: none;
         }}
-        .btn:hover {{ color: #38bdf8; border-color: #38bdf8; background: rgba(30, 41, 59, 0.95); }}
-        .btn.active {{ background: rgba(6, 182, 212, 0.2); color: #38bdf8; border-color: rgba(6, 182, 212, 0.4); }}
-        #legend {{
+        .btn:hover {{ color: #38bdf8; border-color: #38bdf8; background: #1e293b; }}
+        .btn.active {{ background: rgba(6, 182, 212, 0.2); color: #38bdf8; border-color: rgba(6, 182, 212, 0.5); }}
+
+        /* CANVAS VIEWPORT */
+        #viewport {{
+          flex: 1;
+          width: 100%;
+          position: relative;
+          cursor: grab;
+        }}
+        #viewport:active {{ cursor: grabbing; }}
+
+        /* CORNER AXIS ORIENTATION OVERLAY */
+        #axis-overlay {{
           position: absolute;
-          bottom: 12px;
-          left: 16px;
-          right: 16px;
+          top: 10px;
+          left: 14px;
           display: flex;
-          justify-content: space-between;
-          align-items: center;
-          font-size: 11px;
+          flex-direction: column;
+          gap: 3px;
+          font-family: ui-monospace, SFMono-Regular, monospace;
+          font-size: 10px;
           color: #64748b;
+          background: rgba(15, 23, 42, 0.7);
+          padding: 6px 9px;
+          border-radius: 6px;
+          border: 1px solid rgba(51, 65, 85, 0.5);
           pointer-events: none;
+          z-index: 5;
         }}
-        .legend-items {{ display: flex; gap: 14px; align-items: center; }}
-        .item {{ display: flex; align-items: center; gap: 5px; }}
-        .dot {{ width: 8px; height: 8px; border-radius: 50%; display: inline-block; }}
-        canvas {{ display: block; width: 100%; height: 100%; cursor: grab; }}
-        canvas:active {{ cursor: grabbing; }}
+        .axis-item {{ display: flex; align-items: center; gap: 5px; }}
+        .tag-x {{ color: #38bdf8; font-weight: bold; }}
+        .tag-y {{ color: #a855f7; font-weight: bold; }}
+        .tag-z {{ color: #10b981; font-weight: bold; }}
+
+        /* BOTTOM FOOTER & LEGEND */
+        #footer {{
+          padding: 8px 16px;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          border-top: 1px solid rgba(30, 41, 59, 0.6);
+          background: rgba(3, 7, 18, 0.85);
+          font-size: 11px;
+          color: #94a3b8;
+          z-index: 10;
+        }}
+
+        .legend-group {{
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex-wrap: nowrap;
+        }}
+
+        .legend-item {{
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          white-space: nowrap;
+        }}
+
+        .dot {{
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          display: inline-block;
+          flex-shrink: 0;
+        }}
+
+        .footer-tip {{
+          color: #64748b;
+          white-space: nowrap;
+        }}
       </style>
     </head>
     <body>
-      <div id="container">
-        <div id="toolbar">
-          <button id="btn-rotate" class="btn active" onclick="toggleRotate()">⟳ Auto-Rotate</button>
-          <button class="btn" onclick="zoom(-2)">+ Zoom</button>
-          <button class="btn" onclick="zoom(2)">- Zoom</button>
-          <button class="btn" onclick="resetView()">Reset</button>
+      <div id="card">
+        <!-- HEADER -->
+        <div id="header">
+          <div class="header-left">
+            <div class="pulse-dot"></div>
+            <div class="axis-badge">X: Freq | Y: Phase | Z: Magnitude</div>
+          </div>
+
+          <div id="toolbar">
+            <button id="btn-rotate" class="btn active" onclick="toggleRotate()">⟳ Rotate</button>
+            <button class="btn" onclick="zoom(-1.5)">+ Zoom</button>
+            <button class="btn" onclick="zoom(1.5)">- Zoom</button>
+            <button class="btn" onclick="resetView()">Reset</button>
+            <button class="btn" onclick="snapshot()">📷 Save</button>
+          </div>
         </div>
 
-        <div id="canvas-wrapper" style="width: 100%; height: 100%;"></div>
-
-        <div id="legend">
-          <div class="legend-items">
-            <div class="item"><span class="dot" style="background: #4f46e5;"></span> Low Magnitude</div>
-            <div class="item"><span class="dot" style="background: #10b981;"></span> Medium Energy</div>
-            <div class="item"><span class="dot" style="background: #eab308;"></span> Peak Resonances</div>
+        <!-- 3D VIEWPORT -->
+        <div id="viewport">
+          <div id="axis-overlay">
+            <div class="axis-item"><span class="tag-x">X:</span> Frequency (0 → {fs/2:.0f} Hz)</div>
+            <div class="axis-item"><span class="tag-y">Y:</span> Phase (-π → +π rad)</div>
+            <div class="axis-item"><span class="tag-z">Z:</span> Magnitude (Vertical Height)</div>
           </div>
-          <div>💡 Click & drag to rotate • Scroll wheel to zoom</div>
+          <div id="canvas-container" style="width: 100%; height: 100%;"></div>
+        </div>
+
+        <!-- FOOTER & LEGEND -->
+        <div id="footer">
+          <div class="legend-group">
+            <div class="legend-item"><span class="dot" style="background: #4f46e5;"></span> Low Mag</div>
+            <div class="legend-item"><span class="dot" style="background: #10b981;"></span> Mid Energy</div>
+            <div class="legend-item"><span class="dot" style="background: #eab308;"></span> Peak Resonances</div>
+          </div>
+          <div class="footer-tip">💡 Drag to orbit • Scroll/pinch to zoom</div>
         </div>
       </div>
 
       <script>
         const data = {payload};
-        const container = document.getElementById('canvas-wrapper');
-        const width = container.clientWidth || 700;
-        const height = 480;
+        const container = document.getElementById('canvas-container');
+        
+        let width = container.clientWidth || window.innerWidth;
+        let height = container.clientHeight || 420;
 
         let isRotating = true;
         let isDragging = false;
         let prevMouse = {{ x: 0, y: 0 }};
-        let rotation = {{ x: 0.35, y: -0.6 }};
-        let zoomDist = 14;
+        let rotation = {{ x: 0.38, y: -0.65 }};
+        
+        // PERFECT DEFAULT ZOOM: Fits entire wireframe cube without clipping
+        let zoomDist = 14.5;
 
-        // 1. Scene setup
+        // 1. Three.js Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x030712);
 
-        // 2. Camera setup
-        const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+        // 2. Camera Setup (Perspective tuned to 42 degrees FOV)
+        const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 1000);
         camera.position.set(0, 0, zoomDist);
 
-        // 3. Renderer setup
+        // 3. WebGL Renderer
         const renderer = new THREE.WebGLRenderer({{ antialias: true, preserveDrawingBuffer: true }});
         renderer.setSize(width, height);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -669,7 +808,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         gridHelper.position.y = -halfBox;
         rootGroup.add(gridHelper);
 
-        // Box Outline Wireframe
+        // Slate Bounding Wireframe Box
         const boxGeom = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
         const boxEdges = new THREE.EdgesGeometry(boxGeom);
         const boxLine = new THREE.LineSegments(
@@ -678,7 +817,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         );
         rootGroup.add(boxLine);
 
-        // Viridis colormap approximation
+        // Viridis Colormap Function
         function viridisColor(t) {{
           const c = Math.max(0, Math.min(1, t));
           const r = Math.max(0, Math.min(1, -0.05 + 1.25 * c - 0.2 * c * c));
@@ -687,7 +826,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           return new THREE.Color(r, g, b);
         }}
 
-        // Populate Spectral Harmonics
+        // Spectral Point Cloud Construction
         const nyq = data.fs / 2 || 1;
         const maxMag = data.maxMag || 1e-6;
         const positions = [];
@@ -702,7 +841,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           const y = (p / Math.PI) * halfBox;
           const z = (m / maxMag) * boxSize - halfBox;
 
-          positions.push(x, z, y); // Height mapped to magnitude
+          positions.push(x, z, y); // Magnitude is mapped vertically (Z coordinate)
 
           const col = viridisColor(m / maxMag);
           colors.push(col.r, col.g, col.b);
@@ -712,21 +851,21 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         particlesGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         particlesGeom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
-        // Soft Radial Glow Particle Texture
+        // Soft Radial Glow Particle Shader Texture
         const pCanvas = document.createElement('canvas');
         pCanvas.width = 32;
         pCanvas.height = 32;
         const ctx = pCanvas.getContext('2d');
         const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
         grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.7)');
+        grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.75)');
         grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, 32, 32);
 
         const texture = new THREE.CanvasTexture(pCanvas);
         const particlesMat = new THREE.PointsMaterial({{
-          size: 0.26,
+          size: 0.28,
           vertexColors: true,
           map: texture,
           transparent: true,
@@ -737,8 +876,9 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const pointCloud = new THREE.Points(particlesGeom, particlesMat);
         rootGroup.add(pointCloud);
 
-        // Interaction
+        // Interaction Listeners (Mouse & Touch)
         const dom = renderer.domElement;
+        
         dom.addEventListener('pointerdown', (e) => {{
           isDragging = true;
           prevMouse = {{ x: e.clientX, y: e.clientY }};
@@ -757,7 +897,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         dom.addEventListener('wheel', (e) => {{
           e.preventDefault();
-          zoomDist = Math.max(5, Math.min(32, zoomDist + e.deltaY * 0.02));
+          zoomDist = Math.max(6, Math.min(28, zoomDist + e.deltaY * 0.015));
         }}, {{ passive: false }});
 
         function toggleRotate() {{
@@ -766,15 +906,23 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         }}
 
         function zoom(delta) {{
-          zoomDist = Math.max(5, Math.min(32, zoomDist + delta));
+          zoomDist = Math.max(6, Math.min(28, zoomDist + delta));
         }}
 
         function resetView() {{
-          rotation = {{ x: 0.35, y: -0.6 }};
-          zoomDist = 14;
+          rotation = {{ x: 0.38, y: -0.65 }};
+          zoomDist = 14.5;
         }}
 
-        // Animation Loop
+        function snapshot() {{
+          const dataUrl = renderer.domElement.toDataURL('image/png');
+          const link = document.createElement('a');
+          link.download = '3d_fft_spectrum.png';
+          link.href = dataUrl;
+          link.click();
+        }}
+
+        // Real-Time WebGL Render Loop
         let lastTime = performance.now();
         function animate() {{
           requestAnimationFrame(animate);
@@ -795,17 +943,20 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         animate();
 
-        window.addEventListener('resize', () => {{
-          const newW = container.clientWidth || 700;
-          camera.aspect = newW / height;
+        // Responsive Resize Observer
+        const resizeObserver = new ResizeObserver(() => {{
+          width = container.clientWidth || window.innerWidth;
+          height = container.clientHeight || 420;
+          camera.aspect = width / height;
           camera.updateProjectionMatrix();
-          renderer.setSize(newW, height);
+          renderer.setSize(width, height);
         }});
+        resizeObserver.observe(container);
       </script>
     </body>
     </html>
     """
-    components.html(html_code, height=520)
+    components.html(html_code, height=540)
 
 
 # ============================================================================
@@ -1066,7 +1217,7 @@ if app_mode == "📈 1D Signal Studio":
     plt.close(fig1)
 
     # ========================================================================
-    # 🌟 3D FFT SPECTRUM LANDSCAPE (THREE.JS HARDWARE-ACCELERATED WEBGL)
+    # 🌟 3D FFT SPECTRUM (PERFECT ALIGNMENT & RESPONSIVE ZOOM)
     # ========================================================================
     st.subheader("3D FFT Spectrum Landscape")
     phase = np.angle(fft_complex)
