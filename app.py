@@ -537,7 +537,7 @@ def apply_dilation(image_array, size):
 
 
 # ============================================================================
-# 🌟 THREE.JS WEBGL 3D SPECTRUM (PERFECT ALIGNMENT & RESPONSIVE ZOOM)
+# 🌟 THREE.JS WEBGL 3D SPECTRUM (PERFECT EDGE FRAMING & RESPONSIVE FIT)
 # ============================================================================
 
 def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
@@ -576,7 +576,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         #card {{
           position: relative;
           width: 100%;
-          height: 520px;
+          height: 540px;
           border-radius: 16px;
           border: 1px solid #1e293b;
           background: #030712;
@@ -585,7 +585,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           flex-direction: column;
         }}
 
-        /* TOP HEADER & AXIS LABELS */
+        /* TOP HEADER & AXIS BADGES */
         #header {{
           padding: 12px 16px 8px 16px;
           display: flex;
@@ -739,8 +739,8 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
           <div id="toolbar">
             <button id="btn-rotate" class="btn active" onclick="toggleRotate()">⟳ Rotate</button>
-            <button class="btn" onclick="zoom(-1.5)">+ Zoom</button>
-            <button class="btn" onclick="zoom(1.5)">- Zoom</button>
+            <button class="btn" onclick="zoom(-1.8)">+ Zoom</button>
+            <button class="btn" onclick="zoom(1.8)">- Zoom</button>
             <button class="btn" onclick="resetView()">Reset</button>
             <button class="btn" onclick="snapshot()">📷 Save</button>
           </div>
@@ -772,22 +772,22 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const container = document.getElementById('canvas-container');
         
         let width = container.clientWidth || window.innerWidth;
-        let height = container.clientHeight || 420;
+        let height = container.clientHeight || 440;
 
         let isRotating = true;
         let isDragging = false;
         let prevMouse = {{ x: 0, y: 0 }};
-        let rotation = {{ x: 0.38, y: -0.65 }};
+        let rotation = {{ x: 0.42, y: -0.68 }};
         
-        // PERFECT DEFAULT ZOOM: Fits entire wireframe cube without clipping
-        let zoomDist = 14.5;
+        // TUNED DEFAULT ZOOM: Gives comfortable margin around all 12 outer edges & corners
+        let zoomDist = 17.5;
 
         // 1. Three.js Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x030712);
 
-        // 2. Camera Setup (Perspective tuned to 42 degrees FOV)
-        const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 1000);
+        // 2. Camera Setup (Perspective tuned to 40 degrees FOV)
+        const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 1000);
         camera.position.set(0, 0, zoomDist);
 
         // 3. WebGL Renderer
@@ -897,7 +897,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         dom.addEventListener('wheel', (e) => {{
           e.preventDefault();
-          zoomDist = Math.max(6, Math.min(28, zoomDist + e.deltaY * 0.015));
+          zoomDist = Math.max(8, Math.min(32, zoomDist + e.deltaY * 0.015));
         }}, {{ passive: false }});
 
         function toggleRotate() {{
@@ -906,12 +906,12 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         }}
 
         function zoom(delta) {{
-          zoomDist = Math.max(6, Math.min(28, zoomDist + delta));
+          zoomDist = Math.max(8, Math.min(32, zoomDist + delta));
         }}
 
         function resetView() {{
-          rotation = {{ x: 0.38, y: -0.65 }};
-          zoomDist = 14.5;
+          rotation = {{ x: 0.42, y: -0.68 }};
+          zoomDist = 17.5;
         }}
 
         function snapshot() {{
@@ -946,7 +946,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         // Responsive Resize Observer
         const resizeObserver = new ResizeObserver(() => {{
           width = container.clientWidth || window.innerWidth;
-          height = container.clientHeight || 420;
+          height = container.clientHeight || 440;
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
           renderer.setSize(width, height);
@@ -956,7 +956,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
     </body>
     </html>
     """
-    components.html(html_code, height=540)
+    components.html(html_code, height=560)
 
 
 # ============================================================================
@@ -1217,7 +1217,7 @@ if app_mode == "📈 1D Signal Studio":
     plt.close(fig1)
 
     # ========================================================================
-    # 🌟 3D FFT SPECTRUM (PERFECT ALIGNMENT & RESPONSIVE ZOOM)
+    # 🌟 3D FFT SPECTRUM (PERFECT EDGE FRAMING & RESPONSIVE FIT)
     # ========================================================================
     st.subheader("3D FFT Spectrum Landscape")
     phase = np.angle(fft_complex)
