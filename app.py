@@ -17,6 +17,7 @@ import uuid
 
 import numpy as np
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 import streamlit as st
 from scipy.io import wavfile, loadmat
 from scipy.signal import spectrogram, firwin, butter, lfilter, filtfilt, freqz, square, sawtooth, chirp, tf2zpk
@@ -819,14 +820,12 @@ if app_mode == "📈 1D Signal Studio":
 
     # --- NEW: 3D FFT SPECTRUM ---
     st.subheader("3D FFT Spectrum (Magnitude & Phase)")
-    fig3d = plt.figure(figsize=(10, 8))
-    ax3d = fig3d.add_subplot(111, projection='3d')
 
     # Extract phase from the complex FFT
     phase = np.angle(fft_complex)
 
     # FIX 1: THE 3D SCATTER "TOP-K" FIX
-    # Protects RAM from 1.3+ million points while guaranteeing the highest peaks 
+    # Protects RAM from 1.3+ million points while guaranteeing the highest peaks
     # are NEVER accidentally decimated away, keeping the 2D and 3D graphs perfectly aligned.
     n_points = len(freqs)
     if n_points > 3000:
@@ -839,27 +838,64 @@ if app_mode == "📈 1D Signal Studio":
         plot_phase = phase
         plot_mag = magnitude
 
-    # Use a scatter plot. A continuous 3D line gets extremely messy when phase wraps from +pi to -pi
-    ax3d.scatter(plot_freqs, plot_phase, plot_mag, s=2, c=plot_mag, cmap='viridis', alpha=0.7)
+    fig3d = go.Figure()
 
-    ax3d.set_title("3D Frequency Spectrum\n(X: Freq | Y: Phase | Z: Magnitude)")
-    ax3d.set_xlabel("Frequency (Hz)")
-    ax3d.set_ylabel("Phase (Radians)")
-    ax3d.set_zlabel("Magnitude")
-    
-    ax3d.set_xlim(0, fs / 2)
-    ax3d.set_ylim(-np.pi, np.pi)
+    # Main interactive point cloud. A continuous 3D line gets extremely messy
+    # when phase wraps from +pi to -pi, so markers-only, same as before.
+    fig3d.add_trace(go.Scatter3d(
+        x=plot_freqs,
+        y=plot_phase,
+        z=plot_mag,
+        mode="markers",
+        marker=dict(
+            size=3,
+            color=plot_mag,
+            colorscale="Viridis",
+            opacity=0.8,
+            colorbar=dict(title="Magnitude", x=1.02),
+        ),
+        name="Spectrum",
+        hovertemplate="Freq: %{x:.1f} Hz<br>Phase: %{y:.2f} rad<br>Mag: %{z:.4f}<extra></extra>",
+        showlegend=False,
+    ))
 
-    # Note: tight_layout is deliberately omitted here, as it conflicts with 3D subplot constraints.
-    st.pyplot(fig3d)
+    # Dummy (invisible) traces purely to render a custom categorical legend.
+    # The real color mapping stays continuous (Viridis) via the colorbar above;
+    # these three entries just label that gradient in human terms.
+    for label, color in [
+        ("Low Magnitude", "purple"),
+        ("Medium Energy", "teal"),
+        ("Peak Resonances", "yellow"),
+    ]:
+        fig3d.add_trace(go.Scatter3d(
+            x=[None], y=[None], z=[None],
+            mode="markers",
+            marker=dict(size=8, color=color),
+            name=label,
+            showlegend=True,
+        ))
 
-    buf3d = io.BytesIO()
-    fig3d.savefig(buf3d, format=graph_format)
-    st.download_button(
-        label=f"📥 Download 3D Spectrum Graph ({graph_format.upper()})", data=buf3d.getvalue(),
-        file_name=f"3d_fft_spectrum.{graph_format}", mime=graph_mime
+    fig3d.update_layout(
+        template="plotly_dark",
+        title="3D Frequency Spectrum (X: Freq | Y: Phase | Z: Magnitude)",
+        scene=dict(
+            xaxis=dict(title="Frequency (Hz)", range=[0, fs / 2]),
+            yaxis=dict(title="Phase (Radians)", range=[-np.pi, np.pi]),
+            zaxis=dict(title="Magnitude"),
+        ),
+        legend=dict(
+            orientation="h",
+            yanchor="top",
+            y=-0.05,
+            xanchor="center",
+            x=0.5,
+        ),
+        margin=dict(l=0, r=0, t=50, b=0),
+        height=700,
     )
-    plt.close(fig3d)
+
+    # Fully interactive: click-drag to orbit, scroll/pinch to zoom, hover for values.
+    st.plotly_chart(fig3d, use_container_width=True)
     # ----------------------------
 
     st.header("Filter Design")
