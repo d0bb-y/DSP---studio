@@ -820,12 +820,13 @@ if app_mode == "📈 1D Signal Studio":
 
     # --- NEW: 3D FFT SPECTRUM ---
     st.subheader("3D FFT Spectrum (Magnitude & Phase)")
+    st.caption("🖱️ Click & drag to rotate • Scroll wheel to zoom")
 
     # Extract phase from the complex FFT
     phase = np.angle(fft_complex)
 
     # FIX 1: THE 3D SCATTER "TOP-K" FIX
-    # Protects RAM from 1.3+ million points while guaranteeing the highest peaks
+    # Protects RAM from 1.3+ million points while guaranteeing the highest peaks 
     # are NEVER accidentally decimated away, keeping the 2D and 3D graphs perfectly aligned.
     n_points = len(freqs)
     if n_points > 3000:
@@ -852,7 +853,14 @@ if app_mode == "📈 1D Signal Studio":
             color=plot_mag,
             colorscale="Viridis",
             opacity=0.8,
-            colorbar=dict(title="Magnitude", x=1.02),
+            colorbar=dict(
+                title="Magnitude",
+                orientation="h",
+                y=-0.2,
+                x=0.5,
+                xanchor="center",
+                len=0.75,
+            ),
         ),
         name="Spectrum",
         hovertemplate="Freq: %{x:.1f} Hz<br>Phase: %{y:.2f} rad<br>Mag: %{z:.4f}<extra></extra>",
@@ -860,8 +868,6 @@ if app_mode == "📈 1D Signal Studio":
     ))
 
     # Dummy (invisible) traces purely to render a custom categorical legend.
-    # The real color mapping stays continuous (Viridis) via the colorbar above;
-    # these three entries just label that gradient in human terms.
     for label, color in [
         ("Low Magnitude", "purple"),
         ("Medium Energy", "teal"),
@@ -877,7 +883,6 @@ if app_mode == "📈 1D Signal Studio":
 
     fig3d.update_layout(
         template="plotly_dark",
-        title="3D Frequency Spectrum (X: Freq | Y: Phase | Z: Magnitude)",
         scene=dict(
             xaxis=dict(title="Frequency (Hz)", range=[0, fs / 2]),
             yaxis=dict(title="Phase (Radians)", range=[-np.pi, np.pi]),
@@ -886,15 +891,15 @@ if app_mode == "📈 1D Signal Studio":
         legend=dict(
             orientation="h",
             yanchor="top",
-            y=-0.05,
+            y=-0.35,
             xanchor="center",
             x=0.5,
         ),
-        margin=dict(l=0, r=0, t=50, b=0),
+        margin=dict(l=0, r=0, b=0, t=30),
         height=700,
+        autosize=True,
     )
 
-    # Fully interactive: click-drag to orbit, scroll/pinch to zoom, hover for values.
     st.plotly_chart(fig3d, use_container_width=True)
     # ----------------------------
 
