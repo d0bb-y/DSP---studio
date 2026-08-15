@@ -120,7 +120,6 @@ def convert_audio_to_wav(input_path, output_path=None):
     except Exception:
         pass
 
-    # Python-level fallback if ffmpeg is missing
     try:
         sf = _ensure_package("soundfile")
         data, samplerate = sf.read(input_path)
@@ -141,7 +140,6 @@ def load_wav_signal(filename):
     try:
         fs, signal = wavfile.read(filename)
     except ValueError:
-        # Fallback if standard wavfile parser fails on non-standard chunks
         converted_path = convert_audio_to_wav(filename)
         fs, signal = wavfile.read(converted_path)
 
@@ -808,10 +806,8 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         function getOptimalZoom(w, h) {{
           const aspect = w / h;
           if (aspect >= 1.0) {{
-            // Desktop / Landscape: 21 units
             return 21.0;
           }} else {{
-            // Mobile Portrait: Scale camera distance so the horizontal bounding box does NOT clip
             const safeAspect = Math.max(0.35, aspect * 0.90);
             return Math.max(21.0, 19.5 / safeAspect);
           }}
@@ -819,21 +815,17 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         let zoomDist = getOptimalZoom(width, height);
 
-        // 1. Three.js Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x030712);
 
-        // 2. Camera Setup (Aspect ratio calculated dynamically)
         const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 1000);
         camera.position.set(0, 0, zoomDist);
 
-        // 3. WebGL Renderer
         const renderer = new THREE.WebGLRenderer({{ antialias: true, preserveDrawingBuffer: true }});
         renderer.setSize(width, height);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
 
-        // 4. Object Group
         const rootGroup = new THREE.Group();
         rootGroup.position.y = 0.15;
         scene.add(rootGroup);
@@ -841,12 +833,10 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const boxSize = 7.0;
         const halfBox = boxSize / 2;
 
-        // Floor Grid
         const gridHelper = new THREE.GridHelper(boxSize, 10, 0x38bdf8, 0x1e293b);
         gridHelper.position.y = -halfBox;
         rootGroup.add(gridHelper);
 
-        // Wireframe Box
         const boxGeom = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
         const boxEdges = new THREE.EdgesGeometry(boxGeom);
         const boxLine = new THREE.LineSegments(
@@ -855,7 +845,6 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         );
         rootGroup.add(boxLine);
 
-        // Viridis Colormap Function
         function viridisColor(t) {{
           const c = Math.max(0, Math.min(1, t));
           const r = Math.max(0, Math.min(1, -0.05 + 1.25 * c - 0.2 * c * c));
@@ -864,7 +853,6 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           return new THREE.Color(r, g, b);
         }}
 
-        // Spectral Point Cloud Construction
         const nyq = data.fs / 2 || 1;
         const maxMag = data.maxMag || 1e-6;
         const positions = [];
@@ -889,7 +877,6 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         particlesGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         particlesGeom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
-        // Soft Glow Particle Texture
         const pCanvas = document.createElement('canvas');
         pCanvas.width = 32;
         pCanvas.height = 32;
@@ -914,7 +901,6 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const pointCloud = new THREE.Points(particlesGeom, particlesMat);
         rootGroup.add(pointCloud);
 
-        // Interaction Listeners (Mouse & Touch gestures)
         const dom = renderer.domElement;
         let initialPinchDist = null;
         let startZoomOnPinch = zoomDist;
@@ -937,7 +923,6 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           isDragging = false; 
         }});
 
-        // Touch Pinch-to-Zoom Support
         dom.addEventListener('touchstart', (e) => {{
           if (e.touches.length === 2) {{
             initialPinchDist = Math.hypot(
@@ -992,7 +977,6 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           link.click();
         }}
 
-        // Render Loop
         let lastTime = performance.now();
         function animate() {{
           requestAnimationFrame(animate);
@@ -1013,7 +997,6 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         animate();
 
-        // Responsive Resize Observer
         const resizeObserver = new ResizeObserver(() => {{
           width = container.clientWidth || window.innerWidth || 360;
           height = container.clientHeight || 540;
@@ -1142,58 +1125,51 @@ if app_mode == "📈 1D Signal Studio":
             st.stop()
             
     elif source == "Record Live Audio":
-        st.sidebar.markdown(
-            """
-            <style>
-            /* Suppress st.audio_input's transient internal WebAudio decode error banner on mobile Safari */
-            [data-testid="stAudioInputError"],
-            [data-testid="stAudioInput"] [data-testid="stAudioInputError"],
-            [data-testid="stAudioInput"] [class*="Error"],
-            [data-testid="stAudioInput"] [class*="error"],
-            [data-testid="stAudioInput"] [role="alert"] {
-                display: none !important;
-                visibility: hidden !important;
-                opacity: 0 !important;
-                height: 0 !important;
-                pointer-events: none !important;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
         st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
 
         if "recorder_key_version" not in st.session_state:
             st.session_state.recorder_key_version = 0
         recorder_key = f"live_audio_recorder_{st.session_state.recorder_key_version}"
 
-        recorder_box = st.sidebar.container(key="live_recorder_box")
-        with recorder_box:
-            recorded_audio = st.audio_input(
+        mic_rec = None
+        try:
+            from streamlit_mic_recorder import mic_recorder
+            mic_rec = mic_recorder
+        except ImportError:
+            try:
+                mod = _ensure_package("streamlit-mic-recorder", "streamlit_mic_recorder")
+                mic_rec = getattr(mod, "mic_recorder", None)
+            except Exception:
+                mic_rec = None
+
+        audio_bytes = None
+        if mic_rec is not None:
+            audio_record = mic_rec(
+                start_prompt="🎙️ Start Recording",
+                stop_prompt="⏹️ Stop Recording",
+                key=recorder_key,
+                format="wav",
+                use_container_width=True
+            )
+            if audio_record is not None and "bytes" in audio_record and len(audio_record["bytes"]) > 0:
+                audio_bytes = audio_record["bytes"]
+        else:
+            recorded_audio = st.sidebar.audio_input(
                 "🎙️ Record from your microphone",
                 key=recorder_key,
             )
+            if recorded_audio is not None:
+                audio_bytes = recorded_audio.getvalue()
 
-        if recorded_audio is None:
-            st.info("Record audio using the widget in the sidebar, or pick another source to try it instantly.")
+        if audio_bytes is None or len(audio_bytes) == 0:
+            st.info("Click **🎙️ Start Recording** in the sidebar to capture audio from your microphone.")
             st.stop()
 
-        # Hide the (still-mounted) native widget and show our own preview instead.
-        st.sidebar.markdown(
-            "<style>.st-key-live_recorder_box { "
-            "position: absolute !important; "
-            "top: -9999px !important; "
-            "left: -9999px !important; "
-            "pointer-events: none !important; "
-            "}</style>",
-            unsafe_allow_html=True,
-        )
-
-        st.sidebar.markdown("<p style='font-size: 14px; margin-bottom: 8px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
+        st.sidebar.markdown("<p style='font-size: 14px; margin-top: 8px; margin-bottom: 8px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
 
         p_col1, p_col2 = st.sidebar.columns([4, 1])
         with p_col1:
-            st.audio(recorded_audio, format="audio/wav")
+            st.audio(audio_bytes, format="audio/wav")
         with p_col2:
             st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
             if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
@@ -1205,7 +1181,7 @@ if app_mode == "📈 1D Signal Studio":
         tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
 
         with open(tmp_path, "wb") as f:
-            f.write(recorded_audio.getbuffer())
+            f.write(audio_bytes)
 
         try:
             fs, signal, n_interp, fs_warning = load_any_signal(tmp_path)
