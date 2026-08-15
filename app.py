@@ -120,7 +120,6 @@ def convert_audio_to_wav(input_path, output_path=None):
     except Exception:
         pass
 
-    # Python-level fallback if ffmpeg is missing
     try:
         sf = _ensure_package("soundfile")
         data, samplerate = sf.read(input_path)
@@ -141,7 +140,6 @@ def load_wav_signal(filename):
     try:
         fs, signal = wavfile.read(filename)
     except ValueError:
-        # Fallback if standard wavfile parser fails
         converted_path = convert_audio_to_wav(filename)
         fs, signal = wavfile.read(converted_path)
 
@@ -804,7 +802,6 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         let prevMouse = {{ x: 0, y: 0 }};
         let rotation = {{ x: 0.35, y: -0.6 }};
         
-        // DYNAMIC CAMERA FRAMING CALCULATION (RESPONSIVE FOR PHONES & DESKTOPS)
         function getOptimalZoom(w, h) {{
           const aspect = w / h;
           if (aspect >= 1.0) {{
@@ -1129,21 +1126,51 @@ if app_mode == "📈 1D Signal Studio":
     elif source == "Record Live Audio":
         st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
 
-        recorded_audio = st.sidebar.audio_input(
-            "Record from your microphone",
-            key="live_audio_recorder",
-        )
+        if "recorder_key_version" not in st.session_state:
+            st.session_state.recorder_key_version = 0
+        recorder_key = f"live_audio_rec_{st.session_state.recorder_key_version}"
 
-        if recorded_audio is None:
+        audio_bytes = None
+
+        mic_func = None
+        try:
+            from streamlit_mic_recorder import mic_recorder
+            mic_func = mic_recorder
+        except ImportError:
+            try:
+                mod = _ensure_package("streamlit-mic-recorder", "streamlit_mic_recorder")
+                mic_func = getattr(mod, "mic_recorder", None)
+            except Exception:
+                mic_func = None
+
+        with st.sidebar:
+            if mic_func is not None:
+                rec_result = mic_func(
+                    start_prompt="🎙️ Record from microphone",
+                    stop_prompt="⏹️ Stop recording",
+                    key=recorder_key,
+                    format="wav",
+                    use_container_width=True
+                )
+                if rec_result is not None and isinstance(rec_result, dict) and "bytes" in rec_result and rec_result["bytes"]:
+                    audio_bytes = rec_result["bytes"]
+            else:
+                raw_rec = st.audio_input(
+                    "Record from your microphone",
+                    key=recorder_key,
+                )
+                if raw_rec is not None:
+                    audio_bytes = raw_rec.getvalue()
+
+        if audio_bytes is None or len(audio_bytes) == 0:
             st.info("Record audio using the sidebar widget, or pick another source to try it instantly.")
             st.stop()
 
-        # Process the recorded audio normally - identical to the uploaded-file path.
         safe_filename = f"{uuid.uuid4().hex}_live_recording.wav"
         tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
 
         with open(tmp_path, "wb") as f:
-            f.write(recorded_audio.getvalue())
+            f.write(audio_bytes)
 
         try:
             fs, signal, n_interp, fs_warning = load_any_signal(tmp_path)
@@ -1154,6 +1181,32 @@ if app_mode == "📈 1D Signal Studio":
         except Exception as e:
             st.sidebar.error(str(e))
             st.stop()
+
+        with st.sidebar:
+            st.markdown("<p style='font-size: 13px; margin-top: 8px; margin-bottom: 2px; color: #94a3b8;'><b>Recorded Waveform Preview:</b></p>", unsafe_allow_html=True)
+            
+            try:
+                fig_prev, ax_prev = plt.subplots(figsize=(4, 1.0), facecolor='none')
+                downsample = max(1, len(signal) // 400)
+                sub_sig = signal[::downsample]
+                sub_t = np.arange(len(sub_sig))
+                ax_prev.plot(sub_t, sub_sig, color='#38bdf8', linewidth=0.9)
+                ax_prev.fill_between(sub_t, sub_sig, color='#38bdf8', alpha=0.25)
+                ax_prev.set_axis_off()
+                fig_prev.subplots_adjust(left=0, right=1, top=1, bottom=0)
+                st.pyplot(fig_prev, use_container_width=True)
+                plt.close(fig_prev)
+            except Exception:
+                pass
+
+            p_col1, p_col2 = st.columns([4, 1])
+            with p_col1:
+                st.audio(audio_bytes, format="audio/wav")
+            with p_col2:
+                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                if st.button("🗑️", key="del_rec_btn", type="primary", help="Clear and re-record", use_container_width=True):
+                    st.session_state.recorder_key_version += 1
+                    st.rerun()
 
     elif source == "Demo: Real Audio (Voice)":
         with st.spinner("Loading real audio sample..."):
