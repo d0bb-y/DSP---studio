@@ -107,7 +107,37 @@ def load_csv_signal(filename, fs_override=None):
         fs = 1.0 / np.mean(dt)
         return fs, sig_col.astype(np.float32), n_missing_t + n_missing_v
 
+def convert_audio_to_wav(input_path, output_path=None):
+    if output_path is None:
+        output_path = os.path.splitext(input_path)[0] + '_converted.wav'
+    try:
+        result = subprocess.run(
+            ['ffmpeg', '-y', '-i', input_path, '-acodec', 'pcm_s16le', output_path],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and os.path.exists(output_path):
+            return output_path
+    except Exception:
+        pass
+
+    # Python-level fallback if ffmpeg is missing
+    try:
+        sf = _ensure_package("soundfile")
+        data, samplerate = sf.read(input_path)
+        wavfile.write(output_path, samplerate, (data * 32767).astype(np.int16) if data.dtype.kind == 'f' else data)
+        return output_path
+    except Exception:
+        pass
+
+    raise RuntimeError("Could not decode audio. Please ensure FFmpeg or soundfile is available.")
+
 def load_wav_signal(filename):
+    with open(filename, 'rb') as f:
+        header = f.read(4)
+    if header not in (b'RIFF', b'RIFX', b'RF64'):
+        converted_path = convert_audio_to_wav(filename)
+        return load_wav_signal(converted_path)
+
     fs, signal = wavfile.read(filename)
     if signal.dtype == np.int16:
         signal = signal.astype(np.float32) / 32768.0
@@ -226,21 +256,7 @@ def _ensure_package(pkg_name, import_name=None):
             raise RuntimeError(f"Couldn't install {pkg_name}:\n{result.stderr.strip()[-500:]}")
         return __import__(import_name)
 
-AUDIO_EXTS = {'.mp3', '.m4a', '.aac', '.flac', '.ogg', '.aiff', '.aif', '.wma'}
-
-def convert_audio_to_wav(input_path, output_path=None):
-    if output_path is None:
-        output_path = os.path.splitext(input_path)[0] + '_converted.wav'
-    try:
-        result = subprocess.run(
-            ['ffmpeg', '-y', '-i', input_path, '-acodec', 'pcm_s16le', output_path],
-            capture_output=True, text=True
-        )
-    except FileNotFoundError:
-        raise RuntimeError("FFmpeg is not installed on this system. Upload a .wav file instead.")
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg couldn't convert {input_path}:\n{result.stderr.strip()[-500:]}")
-    return output_path
+AUDIO_EXTS = {'.mp3', '.m4a', '.aac', '.flac', '.ogg', '.aiff', '.aif', '.wma', '.mp4', '.webm'}
 
 def _is_hdf5(filename):
     with open(filename, 'rb') as f:
@@ -1126,26 +1142,10 @@ if app_mode == "📈 1D Signal Studio":
             st.session_state.recorder_key_version = 0
         recorder_key = f"live_audio_recorder_{st.session_state.recorder_key_version}"
 
-        # st.audio_input is rendered UNCONDITIONALLY on every rerun, in the same
-        # container, for as long as this source is selected - it is never skipped
-        # once a recording exists. That's the actual fix. The crash happened
-        # because the previous code stopped calling st.audio_input() on the exact
-        # rerun where a recording finished: Streamlit's frontend reads "no delta
-        # for this widget this run" as "tear it out of the tree", but the widget's
-        # own React component was still busy switching itself from its recording
-        # UI to its built-in playback UI at that instant. Yanking the DOM node out
-        # from under a component mid-transition is what threw the exception behind
-        # the grey "An error has occurred" box. A callback can't prevent that -
-        # callbacks run on the Python side before a rerun, not before the browser
-        # paints, so it never had a chance to help.
-        # Instead of removing the widget, we fade it out with CSS once a recording
-        # exists. It keeps quietly living underneath, so its own internal
-        # transition always has somewhere safe to land.
         recorder_box = st.sidebar.container(key="live_recorder_box")
         with recorder_box:
             recorded_audio = st.audio_input(
                 "🎙️ Record from your microphone",
-                sample_rate=44100,
                 key=recorder_key,
             )
 
@@ -1154,24 +1154,6 @@ if app_mode == "📈 1D Signal Studio":
             st.stop()
 
         # Hide the (still-mounted) native widget and show our own preview instead.
-        #
-        # IMPORTANT: this rule moves the box off-screen instead of using
-        # `display: none`. `display: none` collapses the container to 0x0,
-        # and the widget's own built-in playback UI sizes its waveform
-        # canvas off the container's live dimensions the instant it renders
-        # - the same ResizeObserver/getBoundingClientRect-driven pattern
-        # basically every canvas waveform component uses. That render
-        # happens the moment recording stops, which is the exact same
-        # moment this rule starts applying, so with `display: none` the
-        # widget can end up measuring a zero-width box while trying to lay
-        # out its waveform and throw - that's the grey "An error has
-        # occurred" flash. Positioning it off-screen instead leaves its
-        # real, non-zero dimensions intact, so that internal render always
-        # has something sane to measure, no matter how the timing lines up.
-        # Keyed containers get an auto-generated .st-key-<key> class, so this only
-        # ever touches this one box. Streamlit doesn't guarantee the exact class
-        # name/placement across versions, so re-check with devtools if a future
-        # upgrade ever makes this selector stop matching.
         st.sidebar.markdown(
             "<style>.st-key-live_recorder_box { "
             "position: absolute !important; "
@@ -1190,11 +1172,6 @@ if app_mode == "📈 1D Signal Studio":
         with p_col2:
             st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
             if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
-                # Reset by changing the widget's key rather than touching its
-                # session_state entry directly - this is Streamlit's own
-                # recommended way to clear an upload-family widget, and it
-                # guarantees a genuinely fresh component with nothing left over
-                # on the frontend from the old recording.
                 st.session_state.recorder_key_version += 1
                 st.rerun()
 
