@@ -1128,13 +1128,17 @@ if app_mode == "📈 1D Signal Studio":
 
         # STATE 1: NO AUDIO -> Show the microphone widget
         if st.session_state.recorded_bytes is None:
-            recorded_audio = st.sidebar.audio_input(
+            # Wrap the widget in an empty container so we can instantly destroy it 
+            # to prevent the native Streamlit audio player from briefly rendering and crashing
+            recorder_container = st.sidebar.empty()
+            recorded_audio = recorder_container.audio_input(
                 "🎙️ Record from your microphone",
                 key="live_audio_recorder"
             )
             
             if recorded_audio is not None:
-                # Instantly save the bytes and reload the app to hide the buggy widget
+                # Instantly clear the buggy UI container, save the bytes, and reload
+                recorder_container.empty()
                 st.session_state.recorded_bytes = recorded_audio.getvalue()
                 st.rerun()
             else:
@@ -1143,13 +1147,15 @@ if app_mode == "📈 1D Signal Studio":
                 
         # STATE 2: AUDIO EXISTS -> Show preview & delete button instead of the microphone
         else:
-            st.sidebar.markdown("<p style='font-size: 14px; margin-bottom: -5px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
+            # Increased bottom margin to give the audio widget breathing room
+            st.sidebar.markdown("<p style='font-size: 14px; margin-bottom: 8px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
             
             p_col1, p_col2 = st.sidebar.columns([4, 1])
             with p_col1:
                 st.audio(st.session_state.recorded_bytes, format="audio/wav")
             with p_col2:
-                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                # Adjusted top margin for the button to align nicely with the audio player
+                st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
                 if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
                     # Delete custom state AND the widget's internal memory, then reset
                     st.session_state.recorded_bytes = None
