@@ -1154,12 +1154,31 @@ if app_mode == "📈 1D Signal Studio":
             st.stop()
 
         # Hide the (still-mounted) native widget and show our own preview instead.
+        #
+        # IMPORTANT: this rule moves the box off-screen instead of using
+        # `display: none`. `display: none` collapses the container to 0x0,
+        # and the widget's own built-in playback UI sizes its waveform
+        # canvas off the container's live dimensions the instant it renders
+        # - the same ResizeObserver/getBoundingClientRect-driven pattern
+        # basically every canvas waveform component uses. That render
+        # happens the moment recording stops, which is the exact same
+        # moment this rule starts applying, so with `display: none` the
+        # widget can end up measuring a zero-width box while trying to lay
+        # out its waveform and throw - that's the grey "An error has
+        # occurred" flash. Positioning it off-screen instead leaves its
+        # real, non-zero dimensions intact, so that internal render always
+        # has something sane to measure, no matter how the timing lines up.
         # Keyed containers get an auto-generated .st-key-<key> class, so this only
         # ever touches this one box. Streamlit doesn't guarantee the exact class
         # name/placement across versions, so re-check with devtools if a future
         # upgrade ever makes this selector stop matching.
         st.sidebar.markdown(
-            "<style>.st-key-live_recorder_box { display: none; }</style>",
+            "<style>.st-key-live_recorder_box { "
+            "position: absolute !important; "
+            "top: -9999px !important; "
+            "left: -9999px !important; "
+            "pointer-events: none !important; "
+            "}</style>",
             unsafe_allow_html=True,
         )
 
