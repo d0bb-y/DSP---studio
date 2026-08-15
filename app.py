@@ -1,1594 +1,431 @@
 """
-Universal DSP Signal Analyzer & Filter Design Studio - Web App
-----------------------------------------------------------------
-Run locally:    streamlit run app.py
-Deploy free:    push this file + requirements.txt to a GitHub repo,
-                then deploy at https://share.streamlit.io
+========================================================================================
+Universal DSP Signal Analyzer & Filter Design Studio (Streamlit / Python Edition)
+========================================================================================
+To run this application locally:
+1. Install requirements: pip install streamlit numpy scipy matplotlib plotly sounddevice
+2. Run command: streamlit run app.py
+========================================================================================
 """
 
-import os
-import sys
-import subprocess
-import tempfile
-import io
-import urllib.request
-import uuid
-import json
-
-import numpy as np
-import matplotlib.pyplot as plt
 import streamlit as st
-import streamlit.components.v1 as components
-from scipy.io import wavfile, loadmat
-from scipy.signal import spectrogram, firwin, butter, lfilter, filtfilt, freqz, square, sawtooth, chirp, tf2zpk
-from scipy import ndimage
-from PIL import Image
-
-st.set_page_config(page_title="Universal DSP Signal Analyzer", layout="wide", initial_sidebar_state="expanded")
-
-# ============================================================================
-# DSP ENGINE - Pure Logic
-# ============================================================================
-
-def _strip_comment(line):
-    return line.split('#', 1)[0]
-
-def _first_content_line(filename):
-    with open(filename, 'r') as f:
-        for i, raw_line in enumerate(f):
-            content = _strip_comment(raw_line).strip()
-            if content:
-                return content, i + 1
-    return None, 0
-
-def _detect_delimiter(filename):
-    line, _ = _first_content_line(filename)
-    if line is None:
-        return ','
-    if ',' in line:
-        return ','
-    elif '\t' in line:
-        return '\t'
-    else:
-        return None
-
-def _header_skip_count(filename, delim):
-    line, n_seen = _first_content_line(filename)
-    if line is None:
-        return 0
-    tokens = line.split(delim) if delim else line.split()
-    for tok in tokens:
-        try:
-            float(tok)
-        except ValueError:
-            return n_seen
-    return 0
-
-def _fill_nans(arr, label="data"):
-    mask = np.isnan(arr)
-    n_missing = int(mask.sum())
-    if n_missing == 0:
-        return arr, 0
-    frac_missing = n_missing / len(arr)
-    if frac_missing >= 1.0:
-        raise ValueError(f"The {label} column contains no valid numerical data.")
-    if frac_missing > 0.10:
-        raise ValueError(
-            f"{n_missing} of {len(arr)} values ({frac_missing:.0%}) in the {label} "
-            f"column are missing - too many to interpolate reliably. Check the file."
-        )
-    arr = arr.copy()
-    arr[mask] = np.interp(np.flatnonzero(mask), np.flatnonzero(~mask), arr[~mask])
-    return arr, n_missing
-
-def load_csv_signal(filename, fs_override=None):
-    delim = _detect_delimiter(filename)
-    skip = _header_skip_count(filename, delim)
-    try:
-        raw = np.genfromtxt(filename, delimiter=delim, skip_header=skip)
-    except Exception:
-        raise ValueError("Could not parse CSV/TXT data safely. Ensure data is numeric.")
-
-    if raw.ndim == 1:
-        if fs_override is None:
-            raise ValueError("Single-column data: sample rate (Hz) is required.")
-        filled, n_missing = _fill_nans(raw, "value")
-        return fs_override, filled.astype(np.float32), n_missing
-    else:
-        t_col, n_missing_t = _fill_nans(raw[:, 0], "time")
-        sig_col, n_missing_v = _fill_nans(raw[:, 1], "value")
-        dt = np.diff(t_col)
-        if dt.size == 0:
-            raise ValueError("Time column has only one row - at least 2 samples are needed.")
-        if np.all(dt == 0):
-            raise ValueError("Time column is constant. Check data or provide sample rate manually.")
-        if not np.all(dt > 0):
-            raise ValueError("Time column is not monotonically increasing. Check for out-of-order rows.")
-        fs = 1.0 / np.mean(dt)
-        return fs, sig_col.astype(np.float32), n_missing_t + n_missing_v
-
-def load_wav_signal(filename):
-    fs, signal = wavfile.read(filename)
-    if signal.dtype == np.int16:
-        signal = signal.astype(np.float32) / 32768.0
-    elif signal.dtype == np.int32:
-        signal = signal.astype(np.float32) / 2147483648.0
-    elif signal.dtype == np.uint8:
-        signal = (signal.astype(np.float32) - 128) / 128.0
-    if signal.ndim > 1:
-        signal = signal.mean(axis=1)
-    return fs, signal
-
-# --- REAL-WORLD DEMOS ---
-def generate_real_audio_demo():
-    url = "https://raw.githubusercontent.com/Uberi/speech_recognition/master/examples/english.wav"
-    tmp_path = os.path.join(tempfile.gettempdir(), "real_voice_demo_clear.wav")
-    fail_marker = tmp_path + ".failed"
-
-    def _synthetic_fallback():
-        fs = 8000
-        t = np.linspace(0, 3.0, int(fs * 3.0), endpoint=False)
-        source = sawtooth(2 * np.pi * 120 * t)
-        b1, a1 = butter(2, [600/(fs/2), 800/(fs/2)], btype='bandpass')
-        b2, a2 = butter(2, [1000/(fs/2), 1200/(fs/2)], btype='bandpass')
-        b3, a3 = butter(2, [2300/(fs/2), 2700/(fs/2)], btype='bandpass')
-        synthetic_voice = lfilter(b1, a1, source) + 0.5 * lfilter(b2, a2, source) + 0.1 * lfilter(b3, a3, source)
-        return fs, (synthetic_voice / np.max(np.abs(synthetic_voice))).astype(np.float32)
-
-    if os.path.exists(fail_marker):
-        return _synthetic_fallback()
-    if os.path.exists(tmp_path):
-        return load_wav_signal(tmp_path)
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=3.0) as response, open(tmp_path, 'wb') as out_file:
-            out_file.write(response.read())
-        return load_wav_signal(tmp_path)
-    except Exception:
-        open(fail_marker, 'w').close()  
-        return _synthetic_fallback()
-
-def generate_ecg_demo(duration=10.0, fs=250, heart_rate_bpm=72):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    beat_period = 60.0 / heart_rate_bpm
-    sig = np.zeros_like(t)
-    for beat_start in np.arange(0, duration, beat_period):
-        sig += 0.15 * np.exp(-((t - (beat_start + 0.10)) ** 2) / (2 * 0.020 ** 2))
-        sig += 1.00 * np.exp(-((t - (beat_start + 0.20)) ** 2) / (2 * 0.005 ** 2))
-        sig += 0.30 * np.exp(-((t - (beat_start + 0.35)) ** 2) / (2 * 0.040 ** 2))
-    sig += 0.02 * np.random.randn(len(t))
-    sig += 0.05 * np.sin(2 * np.pi * 0.3 * t)
-    return fs, sig.astype(np.float32)
-
-def generate_sensor_demo(duration=20.0, fs=100):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    sig = 0.5 * np.sin(2 * np.pi * 2 * t) + 0.2 * np.sin(2 * np.pi * 15 * t)
-    sig += 0.05 * np.random.randn(len(t)) + 0.1 * t / duration
-    return fs, sig.astype(np.float32)
-
-def gen_pure_sine(duration=3.0, fs=8000, freq=440):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    return fs, np.sin(2 * np.pi * freq * t).astype(np.float32)
-
-def gen_multi_tone(duration=3.0, fs=8000):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    sig = np.sin(2 * np.pi * 440 * t) + 0.5 * np.sin(2 * np.pi * 880 * t) + 0.25 * np.sin(2 * np.pi * 1320 * t)
-    return fs, (sig / np.max(np.abs(sig))).astype(np.float32)
-
-def gen_noisy_sine(duration=3.0, fs=8000, freq=440):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    sig = np.sin(2 * np.pi * freq * t) + 0.5 * np.random.randn(len(t))
-    return fs, (sig / np.max(np.abs(sig))).astype(np.float32)
-
-def gen_square(duration=3.0, fs=8000, freq=440):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    return fs, square(2 * np.pi * freq * t).astype(np.float32)
-
-def gen_triangle(duration=3.0, fs=8000, freq=440):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    return fs, sawtooth(2 * np.pi * freq * t, width=0.5).astype(np.float32)
-
-def gen_sawtooth(duration=3.0, fs=8000, freq=440):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    return fs, sawtooth(2 * np.pi * freq * t).astype(np.float32)
-
-def gen_chirp(duration=3.0, fs=8000):
-    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
-    sig = chirp(t, f0=20, f1=2000, t1=duration, method='linear')
-    return fs, sig.astype(np.float32)
-
-def gen_white_noise(duration=3.0, fs=8000):
-    sig = np.random.randn(int(fs * duration))
-    return fs, (sig / np.max(np.abs(sig))).astype(np.float32)
-
-def gen_impulse(duration=3.0, fs=8000):
-    sig = np.zeros(int(fs * duration))
-    sig[len(sig)//2] = 1.0 
-    return fs, sig.astype(np.float32)
-
-def gen_step(duration=3.0, fs=8000):
-    sig = np.zeros(int(fs * duration))
-    sig[len(sig)//2:] = 1.0
-    return fs, sig.astype(np.float32)
-
-def _ensure_package(pkg_name, import_name=None):
-    import_name = import_name or pkg_name
-    try:
-        return __import__(import_name)
-    except ImportError:
-        result = subprocess.run([sys.executable, '-m', 'pip', 'install', '-q', pkg_name],
-                                 capture_output=True, text=True)
-        if result.returncode != 0 and 'externally-managed-environment' in result.stderr:
-            result = subprocess.run([sys.executable, '-m', 'pip', 'install', '-q',
-                                      '--break-system-packages', pkg_name],
-                                     capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"Couldn't install {pkg_name}:\n{result.stderr.strip()[-500:]}")
-        return __import__(import_name)
-
-AUDIO_EXTS = {'.mp3', '.m4a', '.aac', '.flac', '.ogg', '.aiff', '.aif', '.wma'}
-
-def convert_audio_to_wav(input_path, output_path=None):
-    if output_path is None:
-        output_path = os.path.splitext(input_path)[0] + '_converted.wav'
-    try:
-        result = subprocess.run(
-            ['ffmpeg', '-y', '-i', input_path, '-acodec', 'pcm_s16le', output_path],
-            capture_output=True, text=True
-        )
-    except FileNotFoundError:
-        raise RuntimeError("FFmpeg is not installed on this system. Upload a .wav file instead.")
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg couldn't convert {input_path}:\n{result.stderr.strip()[-500:]}")
-    return output_path
-
-def _is_hdf5(filename):
-    with open(filename, 'rb') as f:
-        return f.read(8) == b'\x89HDF\r\n\x1a\n'
-
-def load_mat_signal(filename, fs_override=None, var_name=None):
-    use_h5py = _is_hdf5(filename)
-    if not use_h5py:
-        try:
-            data = loadmat(filename)
-        except (NotImplementedError, ValueError) as e:
-            if isinstance(e, NotImplementedError) or 'unknown mat file type' in str(e).lower():
-                use_h5py = True
-            else:
-                raise
-
-    if use_h5py:
-        h5py = _ensure_package('h5py')
-        data = {}
-        with h5py.File(filename, 'r') as f:
-            for k in f.keys():
-                data[k] = np.array(f[k]).squeeze()
-
-    keys = [k for k in data if not k.startswith('__')]
-    if var_name is not None:
-        sig = np.asarray(data[var_name]).squeeze()
-    else:
-        sig_key = max(keys, key=lambda k: np.asarray(data[k]).size)
-        sig = np.asarray(data[sig_key]).squeeze()
-
-    detected_fs = None
-    for k in keys:
-        if any(tag in k.lower() for tag in ('fs', 'rate', 'freq', 'samp')):
-            val = np.asarray(data[k]).squeeze()
-            if val.size == 1:
-                detected_fs = float(val)
-                break
-
-    warning = None
-    if fs_override is not None:
-        fs = fs_override
-        if detected_fs is not None and detected_fs != fs_override:
-            warning = (f"Using your entered rate ({fs_override} Hz) - the file also embeds "
-                       f"{detected_fs} Hz, which was NOT used. Double check which is correct.")
-    elif detected_fs is not None:
-        fs = detected_fs
-    else:
-        raise ValueError(f"Couldn't auto-detect a sample rate (variables found: {keys}).")
-
-    filled, n_missing = _fill_nans(sig, "signal")
-    return fs, filled.astype(np.float32), n_missing, warning
-
-def load_edf_signal(filename, channel=0):
-    pyedflib = _ensure_package('pyedflib')
-    f = pyedflib.EdfReader(filename)
-    try:
-        n_channels = f.signals_in_file
-        if channel >= n_channels:
-            raise ValueError(f"channel={channel} out of range - file has {n_channels}: {f.getSignalLabels()}")
-        signal = f.readSignal(channel)
-        fs = f.getSampleFrequency(channel)
-    finally:
-        f.close()
-    filled, n_missing = _fill_nans(signal, "signal")
-    return fs, filled.astype(np.float32), n_missing
-
-def load_any_signal(filename, fs_override=None, mat_var_name=None, edf_channel=0):
-    ext = os.path.splitext(filename)[1].lower()
-    if ext == '.wav':
-        fs, sig = load_wav_signal(filename)
-        return fs, sig, 0, None
-    elif ext in AUDIO_EXTS:
-        fs, sig = load_wav_signal(convert_audio_to_wav(filename))
-        return fs, sig, 0, None
-    elif ext in ('.csv', '.txt'):
-        fs, sig, n_missing = load_csv_signal(filename, fs_override)
-        return fs, sig, n_missing, None
-    elif ext == '.mat':
-        return load_mat_signal(filename, fs_override, mat_var_name)
-    elif ext in ('.edf', '.bdf'):
-        fs, sig, n_missing = load_edf_signal(filename, edf_channel)
-        return fs, sig, n_missing, None
-    else:
-        raise ValueError(f"Unsupported file type: {ext}")
-
-def design_fir(filter_type, fs, cutoff, cutoff2=None, numtaps=101, window='hamming'):
-    nyq = fs / 2
-    if filter_type == 'lowpass':
-        taps = firwin(numtaps, cutoff / nyq, window=window)
-    elif filter_type == 'highpass':
-        taps = firwin(numtaps, cutoff / nyq, pass_zero=False, window=window)
-    elif filter_type == 'bandpass':
-        taps = firwin(numtaps, [cutoff / nyq, cutoff2 / nyq], pass_zero=False, window=window)
-    elif filter_type == 'notch':
-        taps = firwin(numtaps, [cutoff / nyq, cutoff2 / nyq], pass_zero=True, window=window)
-    else:
-        raise ValueError(f"Unknown filter_type: {filter_type}")
-    return taps, [1.0]
-
-def design_iir(filter_type, fs, cutoff, cutoff2=None, order=4):
-    nyq = fs / 2
-    btype_map = {'lowpass': 'low', 'highpass': 'high', 'bandpass': 'band', 'notch': 'bandstop'}
-    if filter_type in ('lowpass', 'highpass'):
-        b, a = butter(order, cutoff / nyq, btype=btype_map[filter_type])
-    else:
-        b, a = butter(order, [cutoff / nyq, cutoff2 / nyq], btype=btype_map[filter_type])
-    return b, a
-
-def apply_filter(b, a, signal):
-    padlen = 3 * max(len(a), len(b))
-    if len(signal) > padlen:
-        return filtfilt(b, a, signal), False
-    return lfilter(b, a, signal), True
-
-# ============================================================================
-# TRANSFER FUNCTION EQUATION (LaTeX)
-# ============================================================================
-def _tf_fmt_num(val, sig=4):
-    val = float(val)
-    if not np.isfinite(val) or abs(val) < 1e-12:
-        return "0"
-    if abs(val - round(val)) < 1e-9 and abs(val) < 1e6:
-        return f"{int(round(val))}"
-    s = f"{val:.{sig}g}"
-    if 'e' in s:
-        mantissa, exp = s.split('e')
-        return f"{mantissa} \\times 10^{{{int(exp)}}}"
-    return s
-
-def _tf_fmt_complex(val, sig=4):
-    val = complex(val)
-    re, im = val.real, val.imag
-    if abs(im) < 1e-9:
-        return _tf_fmt_num(re, sig)
-    re_s = _tf_fmt_num(re, sig)
-    im_s = _tf_fmt_num(abs(im), sig)
-    sign = "+" if im >= 0 else "-"
-    return f"({re_s} {sign} {im_s}i)"
-
-def _tf_poly_term(coef, power, var="z", is_first=False):
-    sign = "-" if coef < 0 else "+"
-    mag_s = _tf_fmt_num(abs(coef))
-    if power == 0:
-        body = mag_s
-    else:
-        exp = "^{-1}" if power == 1 else f"^{{-{power}}}"
-        coef_part = "" if mag_s == "1" else mag_s
-        body = f"{coef_part}{var}{exp}"
-    if is_first:
-        return f"-{body}" if sign == "-" else body
-    return f" {sign} {body}"
-
-def build_poly_latex(coeffs, var="z", max_head=4):
-    coeffs = list(coeffs)
-    if len(coeffs) == 0:
-        return "0"
-    items = [(i, c) for i, c in enumerate(coeffs) if abs(c) > 1e-12]
-    if not items:
-        return "0"
-    if len(items) <= 2 * max_head + 2:
-        parts = [_tf_poly_term(c, i, var, idx == 0) for idx, (i, c) in enumerate(items)]
-        return "".join(parts).strip()
-    head_items = items[:max_head]
-    tail_i, tail_c = items[-1]
-    head = "".join(_tf_poly_term(c, i, var, idx == 0) for idx, (i, c) in enumerate(head_items))
-    tail = _tf_poly_term(tail_c, tail_i, var, False)
-    return f"{head} + \\cdots{tail}".strip()
-
-def build_factor_latex(roots, var="z", max_head=3):
-    roots = list(roots)
-    n = len(roots)
-    if n == 0:
-        return "1"
-    def factor(r):
-        rs = _tf_fmt_complex(r)
-        if rs.startswith("-"):
-            return f"({var} + {rs[1:]})"
-        return f"({var} - {rs})"
-    if n <= 2 * max_head + 1:
-        return "".join(factor(r) for r in roots)
-    head = "".join(factor(r) for r in roots[:max_head])
-    return f"{head} \\cdots {factor(roots[-1])}"
-
-def format_tf_polynomial_latex(b, a):
-    num = build_poly_latex(b)
-    a_arr = np.asarray(a, dtype=float)
-    if len(a_arr) == 1 and abs(a_arr[0] - 1.0) < 1e-9:
-        return f"H(z) = {num}"
-    den = build_poly_latex(a)
-    return f"H(z) = \\dfrac{{{num}}}{{{den}}}"
-
-def format_tf_zpk_latex(z, p, k):
-    num = build_factor_latex(z)
-    den = build_factor_latex(p)
-    k_val = float(np.real(k))
-    if abs(k_val - 1.0) < 1e-9:
-        prefix = ""
-    elif abs(k_val + 1.0) < 1e-9:
-        prefix = "-"
-    else:
-        prefix = f"{_tf_fmt_num(k_val)} \\cdot "
-    if len(p) == 0:
-        return f"H(z) = {prefix}{num}"
-    return f"H(z) = {prefix}\\dfrac{{{num}}}{{{den}}}"
-
-# ============================================================================
-# 2D IMAGE DSP ENGINE 
-# ============================================================================
-@st.cache_data(show_spinner=False)
-def load_image_array(image_bytes):
-    pil_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    return np.array(pil_image)
-
-@st.cache_data(show_spinner=False)
-def gen_zone_plate(size=512):
-    x = np.linspace(-1, 1, size)
-    y = np.linspace(-1, 1, size)
-    X, Y = np.meshgrid(x, y)
-    R = X**2 + Y**2
-    Z = np.sin(50 * R * np.pi)
-    Z = ((Z + 1) * 127.5).astype(np.uint8)
-    return np.stack([Z, Z, Z], axis=-1)
-
-@st.cache_data(show_spinner=False)
-def gen_2d_grating(size=512):
-    x = np.linspace(-1, 1, size)
-    y = np.linspace(-1, 1, size)
-    X, Y = np.meshgrid(x, y)
-    Z = np.sin(20 * np.pi * X) + np.cos(20 * np.pi * Y)  
-    Z = ((Z + 2) / 4 * 255).astype(np.uint8)
-    return np.stack([Z, Z, Z], axis=-1)
-
-@st.cache_data(show_spinner="Detecting edges...")
-def apply_sobel_edge_detection(image_array):
-    grayscale = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
-    gx = ndimage.sobel(grayscale, axis=1, mode="reflect")
-    gy = ndimage.sobel(grayscale, axis=0, mode="reflect")
-    magnitude = np.hypot(gx, gy)
-    peak = magnitude.max()
-    if peak > 0:
-        magnitude = (magnitude / peak) * 255.0
-    return magnitude.astype(np.uint8)
-
-@st.cache_data(show_spinner="Applying Gaussian blur...")
-def apply_gaussian_blur(image_array, sigma):
-    blurred = ndimage.gaussian_filter(
-        image_array.astype(np.float64), sigma=(sigma, sigma, 0), mode="reflect"
-    )
-    return np.clip(blurred, 0, 255).astype(np.uint8)
-
-@st.cache_data(show_spinner="Sharpening...")
-def apply_sharpening(image_array):
-    sharpen_kernel = np.array([
-        [ 0, -1,  0],
-        [-1,  5, -1],
-        [ 0, -1,  0],
-    ])
-    sharpened = np.empty_like(image_array, dtype=np.float64)
-    for channel in range(image_array.shape[2]):
-        sharpened[..., channel] = ndimage.convolve(
-            image_array[..., channel].astype(np.float64), sharpen_kernel, mode="reflect"
-        )
-    return np.clip(sharpened, 0, 255).astype(np.uint8)
-
-@st.cache_data(show_spinner="Computing 2D FFT...")
-def apply_fft2d(image_array):
-    gray = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
-    f = np.fft.fft2(gray)
-    fshift = np.fft.fftshift(f)
-    magnitude_spectrum = 20 * np.log10(np.abs(fshift) + 1e-8)
-    spread = magnitude_spectrum.max() - magnitude_spectrum.min()
-    if spread < 1e-9:
-        return np.full(gray.shape, 128, dtype=np.uint8)
-    norm_mag = (magnitude_spectrum - magnitude_spectrum.min()) / spread * 255
-    return norm_mag.astype(np.uint8)
-
-@st.cache_data(show_spinner="Applying Median Filter...")
-def apply_median_filter(image_array, size):
-    return ndimage.median_filter(image_array, size=(size, size, 1))
-
-@st.cache_data(show_spinner="Applying Thresholding...")
-def apply_binarization(image_array, threshold):
-    gray = np.dot(image_array[..., :3], [0.299, 0.587, 0.114])
-    bw = (gray > threshold).astype(np.uint8) * 255
-    return np.stack([bw, bw, bw], axis=-1)
-
-@st.cache_data(show_spinner="Applying Erosion...")
-def apply_erosion(image_array, size):
-    return ndimage.grey_erosion(image_array, size=(size, size, 1))
-
-@st.cache_data(show_spinner="Applying Dilation...")
-def apply_dilation(image_array, size):
-    return ndimage.grey_dilation(image_array, size=(size, size, 1))
-
-
-# ============================================================================
-# 🌟 THREE.JS WEBGL 3D SPECTRUM (RESPONSIVE FOR PHONES & DESKTOPS)
-# ============================================================================
-
-def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
-    n_points = len(freqs)
-    if n_points > 3000:
-        top_indices = np.argsort(magnitude)[-3000:]
-        plot_f = freqs[top_indices].tolist()
-        plot_p = phase[top_indices].tolist()
-        plot_m = magnitude[top_indices].tolist()
-    else:
-        plot_f = freqs.tolist()
-        plot_p = phase.tolist()
-        plot_m = magnitude.tolist()
-
-    max_mag = float(np.max(magnitude)) if len(magnitude) > 0 else 1.0
-
-    payload = json.dumps({
-        "freqs": plot_f,
-        "phase": plot_p,
-        "magnitude": plot_m,
-        "maxMag": max_mag,
-        "fs": float(fs)
-    })
-
-    html_code = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-      <style>
-        * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
-        body {{ background-color: #030712; color: #f8fafc; overflow: hidden; }}
-        
-        #card {{
-          position: relative;
-          width: 100%;
-          height: 640px;
-          border-radius: 14px;
-          border: 1px solid #1e293b;
-          background: #030712;
-          overflow: hidden;
-          display: flex;
-          flex-direction: column;
-        }}
-
-        /* TOP HEADER & AXIS BADGES */
-        #header {{
-          padding: 10px 14px;
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          justify-content: space-between;
-          gap: 6px;
-          border-bottom: 1px solid rgba(30, 41, 59, 0.7);
-          background: rgba(3, 7, 18, 0.92);
-          backdrop-filter: blur(10px);
-          z-index: 10;
-        }}
-
-        .header-left {{
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-        }}
-
-        .pulse-dot {{
-          width: 7px;
-          height: 7px;
-          border-radius: 50%;
-          background: #38bdf8;
-          box-shadow: 0 0 8px #38bdf8;
-        }}
-
-        .axis-badge {{
-          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-size: 10px;
-          font-weight: 600;
-          color: #38bdf8;
-          background: rgba(6, 182, 212, 0.12);
-          border: 1px solid rgba(6, 182, 212, 0.35);
-          padding: 2px 7px;
-          border-radius: 9999px;
-          white-space: nowrap;
-        }}
-
-        /* BUTTON TOOLBAR */
-        #toolbar {{
-          display: flex;
-          align-items: center;
-          gap: 4px;
-          flex-wrap: wrap;
-        }}
-
-        .btn {{
-          background: #0f172a;
-          color: #94a3b8;
-          border: 1px solid #334155;
-          padding: 4px 8px;
-          border-radius: 6px;
-          font-size: 11px;
-          font-weight: 500;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          display: inline-flex;
-          align-items: center;
-          gap: 3px;
-          white-space: nowrap;
-          user-select: none;
-          touch-action: manipulation;
-        }}
-        .btn:hover, .btn:active {{ color: #38bdf8; border-color: #38bdf8; background: #1e293b; }}
-        .btn.active {{ background: rgba(6, 182, 212, 0.2); color: #38bdf8; border-color: rgba(6, 182, 212, 0.5); }}
-
-        /* CANVAS VIEWPORT */
-        #viewport {{
-          flex: 1;
-          width: 100%;
-          position: relative;
-          cursor: grab;
-          touch-action: none;
-        }}
-        #viewport:active {{ cursor: grabbing; }}
-
-        /* CORNER AXIS ORIENTATION OVERLAY */
-        #axis-overlay {{
-          position: absolute;
-          top: 10px;
-          left: 12px;
-          display: flex;
-          flex-direction: column;
-          gap: 2px;
-          font-family: ui-monospace, SFMono-Regular, monospace;
-          font-size: 10px;
-          color: #64748b;
-          background: rgba(15, 23, 42, 0.75);
-          padding: 5px 8px;
-          border-radius: 6px;
-          border: 1px solid rgba(51, 65, 85, 0.4);
-          pointer-events: none;
-          z-index: 5;
-          backdrop-filter: blur(4px);
-        }}
-        .axis-item {{ display: flex; align-items: center; gap: 5px; }}
-        .tag-x {{ color: #38bdf8; font-weight: bold; }}
-        .tag-y {{ color: #a855f7; font-weight: bold; }}
-        .tag-z {{ color: #10b981; font-weight: bold; }}
-
-        /* BOTTOM FOOTER & LEGEND */
-        #footer {{
-          padding: 8px 14px;
-          display: flex;
-          flex-wrap: wrap;
-          align-items: center;
-          justify-content: space-between;
-          gap: 6px;
-          border-top: 1px solid rgba(30, 41, 59, 0.7);
-          background: rgba(3, 7, 18, 0.92);
-          font-size: 10px;
-          color: #94a3b8;
-          z-index: 10;
-        }}
-
-        .legend-group {{
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          flex-wrap: wrap;
-        }}
-
-        .legend-item {{
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          white-space: nowrap;
-        }}
-
-        .dot {{
-          width: 7px;
-          height: 7px;
-          border-radius: 50%;
-          display: inline-block;
-          flex-shrink: 0;
-        }}
-
-        .footer-tip {{
-          color: #64748b;
-          white-space: nowrap;
-        }}
-      </style>
-    </head>
-    <body>
-      <div id="card">
-        <!-- HEADER -->
-        <div id="header">
-          <div class="header-left">
-            <div class="pulse-dot"></div>
-            <div class="axis-badge">X: Freq | Y: Phase | Z: Mag</div>
-          </div>
-
-          <div id="toolbar">
-            <button id="btn-rotate" class="btn active" onclick="toggleRotate()">⟳ Rotate</button>
-            <button class="btn" onclick="zoom(-2.5)">+ Zoom</button>
-            <button class="btn" onclick="zoom(2.5)">- Zoom</button>
-            <button class="btn" onclick="resetView()">Reset</button>
-            <button class="btn" onclick="snapshot()">📷 Save</button>
-          </div>
-        </div>
-
-        <!-- 3D VIEWPORT -->
-        <div id="viewport">
-          <div id="axis-overlay">
-            <div class="axis-item"><span class="tag-x">X:</span> Freq (0 → {fs/2:.0f} Hz)</div>
-            <div class="axis-item"><span class="tag-y">Y:</span> Phase (-π → +π)</div>
-            <div class="axis-item"><span class="tag-z">Z:</span> Magnitude (Peak)</div>
-          </div>
-          <div id="canvas-container" style="width: 100%; height: 100%;"></div>
-        </div>
-
-        <!-- FOOTER & LEGEND -->
-        <div id="footer">
-          <div class="legend-group">
-            <div class="legend-item"><span class="dot" style="background: #4f46e5;"></span> Low Mag</div>
-            <div class="legend-item"><span class="dot" style="background: #10b981;"></span> Mid Energy</div>
-            <div class="legend-item"><span class="dot" style="background: #eab308;"></span> Resonances</div>
-          </div>
-          <div class="footer-tip">💡 Drag / swipe to orbit</div>
-        </div>
-      </div>
-
-      <script>
-        const data = {payload};
-        const container = document.getElementById('canvas-container');
-        
-        let width = container.clientWidth || window.innerWidth || 360;
-        let height = container.clientHeight || 540;
-
-        let isRotating = true;
-        let isDragging = false;
-        let prevMouse = {{ x: 0, y: 0 }};
-        let rotation = {{ x: 0.35, y: -0.6 }};
-        
-        // DYNAMIC CAMERA FRAMING CALCULATION (RESPONSIVE FOR PHONES & DESKTOPS)
-        function getOptimalZoom(w, h) {{
-          const aspect = w / h;
-          if (aspect >= 1.0) {{
-            // Desktop / Landscape: 21 units
-            return 21.0;
-          }} else {{
-            // Mobile Portrait: Scale camera distance so the horizontal bounding box does NOT clip
-            const safeAspect = Math.max(0.35, aspect * 0.90);
-            return Math.max(21.0, 19.5 / safeAspect);
-          }}
-        }}
-
-        let zoomDist = getOptimalZoom(width, height);
-
-        // 1. Three.js Scene Setup
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x030712);
-
-        // 2. Camera Setup (Aspect ratio calculated dynamically)
-        const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 1000);
-        camera.position.set(0, 0, zoomDist);
-
-        // 3. WebGL Renderer
-        const renderer = new THREE.WebGLRenderer({{ antialias: true, preserveDrawingBuffer: true }});
-        renderer.setSize(width, height);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        container.appendChild(renderer.domElement);
-
-        // 4. Object Group
-        const rootGroup = new THREE.Group();
-        rootGroup.position.y = 0.15;
-        scene.add(rootGroup);
-
-        const boxSize = 7.0;
-        const halfBox = boxSize / 2;
-
-        // Floor Grid
-        const gridHelper = new THREE.GridHelper(boxSize, 10, 0x38bdf8, 0x1e293b);
-        gridHelper.position.y = -halfBox;
-        rootGroup.add(gridHelper);
-
-        // Wireframe Box
-        const boxGeom = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
-        const boxEdges = new THREE.EdgesGeometry(boxGeom);
-        const boxLine = new THREE.LineSegments(
-          boxEdges,
-          new THREE.LineBasicMaterial({{ color: 0x334155, transparent: true, opacity: 0.4 }})
-        );
-        rootGroup.add(boxLine);
-
-        // Viridis Colormap Function
-        function viridisColor(t) {{
-          const c = Math.max(0, Math.min(1, t));
-          const r = Math.max(0, Math.min(1, -0.05 + 1.25 * c - 0.2 * c * c));
-          const g = Math.max(0, Math.min(1, 0.05 + 1.4 * c - 0.5 * c * c));
-          const b = Math.max(0, Math.min(1, 0.5 + 0.8 * c - 0.8 * c * c));
-          return new THREE.Color(r, g, b);
-        }}
-
-        // Spectral Point Cloud Construction
-        const nyq = data.fs / 2 || 1;
-        const maxMag = data.maxMag || 1e-6;
-        const positions = [];
-        const colors = [];
-
-        for (let i = 0; i < data.freqs.length; i++) {{
-          const f = data.freqs[i];
-          const p = data.phase[i];
-          const m = data.magnitude[i];
-
-          const x = (f / nyq) * boxSize - halfBox;
-          const y = (p / Math.PI) * halfBox;
-          const z = (m / maxMag) * boxSize - halfBox;
-
-          positions.push(x, z, y);
-
-          const col = viridisColor(m / maxMag);
-          colors.push(col.r, col.g, col.b);
-        }}
-
-        const particlesGeom = new THREE.BufferGeometry();
-        particlesGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-        particlesGeom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-
-        // Soft Glow Particle Texture
-        const pCanvas = document.createElement('canvas');
-        pCanvas.width = 32;
-        pCanvas.height = 32;
-        const ctx = pCanvas.getContext('2d');
-        const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
-        grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        grad.addColorStop(0.45, 'rgba(255, 255, 255, 0.7)');
-        grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
-        ctx.fillStyle = grad;
-        ctx.fillRect(0, 0, 32, 32);
-
-        const texture = new THREE.CanvasTexture(pCanvas);
-        const particlesMat = new THREE.PointsMaterial({{
-          size: 0.22,
-          vertexColors: true,
-          map: texture,
-          transparent: true,
-          blending: THREE.AdditiveBlending,
-          depthWrite: false,
-        }});
-
-        const pointCloud = new THREE.Points(particlesGeom, particlesMat);
-        rootGroup.add(pointCloud);
-
-        // Interaction Listeners (Mouse & Touch gestures)
-        const dom = renderer.domElement;
-        let initialPinchDist = null;
-        let startZoomOnPinch = zoomDist;
-        
-        dom.addEventListener('pointerdown', (e) => {{
-          isDragging = true;
-          prevMouse = {{ x: e.clientX, y: e.clientY }};
-        }});
-
-        window.addEventListener('pointermove', (e) => {{
-          if (!isDragging) return;
-          const dx = e.clientX - prevMouse.x;
-          const dy = e.clientY - prevMouse.y;
-          prevMouse = {{ x: e.clientX, y: e.clientY }};
-          rotation.y += dx * 0.008;
-          rotation.x += dy * 0.008;
-        }});
-
-        window.addEventListener('pointerup', () => {{ 
-          isDragging = false; 
-        }});
-
-        // Touch Pinch-to-Zoom Support
-        dom.addEventListener('touchstart', (e) => {{
-          if (e.touches.length === 2) {{
-            initialPinchDist = Math.hypot(
-              e.touches[0].clientX - e.touches[1].clientX,
-              e.touches[0].clientY - e.touches[1].clientY
-            );
-            startZoomOnPinch = zoomDist;
-          }}
-        }}, {{ passive: true }});
-
-        dom.addEventListener('touchmove', (e) => {{
-          if (e.touches.length === 2 && initialPinchDist) {{
-            const currentDist = Math.hypot(
-              e.touches[0].clientX - e.touches[1].clientX,
-              e.touches[0].clientY - e.touches[1].clientY
-            );
-            const factor = initialPinchDist / Math.max(10, currentDist);
-            zoomDist = Math.max(8, Math.min(48, startZoomOnPinch * factor));
-          }}
-        }}, {{ passive: true }});
-
-        dom.addEventListener('touchend', (e) => {{
-          if (e.touches.length < 2) {{
-            initialPinchDist = null;
-          }}
-        }}, {{ passive: true }});
-
-        dom.addEventListener('wheel', (e) => {{
-          e.preventDefault();
-          zoomDist = Math.max(8, Math.min(48, zoomDist + e.deltaY * 0.02));
-        }}, {{ passive: false }});
-
-        function toggleRotate() {{
-          isRotating = !isRotating;
-          document.getElementById('btn-rotate').classList.toggle('active', isRotating);
-        }}
-
-        function zoom(delta) {{
-          zoomDist = Math.max(8, Math.min(48, zoomDist + delta));
-        }}
-
-        function resetView() {{
-          rotation = {{ x: 0.35, y: -0.6 }};
-          zoomDist = getOptimalZoom(width, height);
-        }}
-
-        function snapshot() {{
-          const dataUrl = renderer.domElement.toDataURL('image/png');
-          const link = document.createElement('a');
-          link.download = '3d_fft_spectrum.png';
-          link.href = dataUrl;
-          link.click();
-        }}
-
-        // Render Loop
-        let lastTime = performance.now();
-        function animate() {{
-          requestAnimationFrame(animate);
-          const now = performance.now();
-          const dt = (now - lastTime) / 1000;
-          lastTime = now;
-
-          if (isRotating && !isDragging && !initialPinchDist) {{
-            rotation.y += dt * 0.35;
-          }}
-
-          rootGroup.rotation.x = rotation.x;
-          rootGroup.rotation.y = rotation.y;
-          camera.position.set(0, 0, zoomDist);
-
-          renderer.render(scene, camera);
-        }}
-
-        animate();
-
-        // Responsive Resize Observer
-        const resizeObserver = new ResizeObserver(() => {{
-          width = container.clientWidth || window.innerWidth || 360;
-          height = container.clientHeight || 540;
-          camera.aspect = width / height;
-          camera.updateProjectionMatrix();
-          renderer.setSize(width, height);
-        }});
-        resizeObserver.observe(container);
-      </script>
-    </body>
-    </html>
-    """
-    components.html(html_code, height=660)
-
-
-# ============================================================================
-# WEB UI
-# ============================================================================
-
-st.title("Universal DSP Signal Analyzer & Filter Design Studio")
-
-app_mode = st.sidebar.selectbox(
-    "🎛️ Select Studio Mode",
-    ["📈 1D Signal Studio", "🖼️ 2D Image Studio"]
+import numpy as np
+import scipy.signal as signal
+import scipy.fft as fft
+import plotly.graph_objects as go
+import plotly.express as px
+import pandas as pd
+import io
+
+# -----------------------------------------------------------------------------
+# Streamlit Page Configuration
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="DSP Signal Analyzer & Filter Design Studio",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
+
+# Custom Styling for Clean High-Contrast Dark UI
+st.markdown("""
+<style>
+    .main { background-color: #020617; color: #f8fafc; }
+    .stMetric { background-color: #0f172a; padding: 12px; border-radius: 12px; border: 1px solid #1e293b; }
+    h1, h2, h3, h4 { color: #f1f5f9 !important; font-family: system-ui, -apple-system, sans-serif; }
+    .stTabs [data-baseweb="tab-list"] { gap: 8px; }
+    .stTabs [data-baseweb="tab"] { background-color: #0f172a; border-radius: 8px 8px 0px 0px; color: #94a3b8; }
+    .stTabs [aria-selected="true"] { background-color: #0284c7 !important; color: #ffffff !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# Signal Generation Helper Functions
+# -----------------------------------------------------------------------------
+def generate_signal(source_type, duration=3.0, fs=8000, f0=440):
+    t = np.linspace(0, duration, int(fs * duration), endpoint=False)
+    equation = ""
+    sig = np.zeros_like(t)
+
+    if source_type == "Pure Sine Wave":
+        sig = np.sin(2 * np.pi * f0 * t)
+        equation = rf"x(t) = \sin(2\pi \cdot {f0} \cdot t)"
+    elif source_type == "Multi-Tone Harmonics":
+        sig = 0.6 * np.sin(2 * np.pi * 300 * t) + 0.3 * np.sin(2 * np.pi * 1200 * t) + 0.15 * np.sin(2 * np.pi * 2400 * t)
+        equation = r"x(t) = 0.6\sin(2\pi\cdot 300t) + 0.3\sin(2\pi\cdot 1200t) + 0.15\sin(2\pi\cdot 2400t)"
+    elif source_type == "Noisy Sine":
+        noise = np.random.normal(0, 0.45, len(t))
+        sig = np.sin(2 * np.pi * f0 * t) + noise
+        equation = rf"x(t) = \sin(2\pi \cdot {f0} \cdot t) + \mathcal{{N}}(0, \sigma^2)"
+    elif source_type == "Frequency Chirp":
+        sig = signal.chirp(t, f0=100, t1=duration, f1=3500, method='linear')
+        equation = r"x(t) = \cos\left(2\pi \left(f_0 t + \frac{k}{2}t^2\right)\right)"
+    elif source_type == "Synthetic ECG (Heartbeat)":
+        fs_ecg = 250
+        t_ecg = np.linspace(0, 10.0, int(fs_ecg * 10.0), endpoint=False)
+        sig = np.zeros_like(t_ecg)
+        bpm = 72
+        period = 60.0 / bpm
+        for beat_t in np.arange(0.2, 10.0, period):
+            sig += 0.2 * np.exp(-((t_ecg - (beat_t - 0.15)) ** 2) / (2 * 0.04**2))
+            sig -= 0.15 * np.exp(-((t_ecg - (beat_t - 0.05)) ** 2) / (2 * 0.015**2))
+            sig += 1.2 * np.exp(-((t_ecg - beat_t) ** 2) / (2 * 0.02**2))
+            sig -= 0.25 * np.exp(-((t_ecg - (beat_t + 0.05)) ** 2) / (2 * 0.015**2))
+            sig += 0.35 * np.exp(-((t_ecg - (beat_t + 0.25)) ** 2) / (2 * 0.06**2))
+        return t_ecg, sig, fs_ecg, r"\text{ECG } (P\text{-}Q\text{-}R\text{-}S\text{-}T \text{ Morphological Waves})"
+    elif source_type == "Synthetic Voice (Formants)":
+        f_fund = 140
+        formants = [700, 1220, 2600]
+        sig = np.zeros_like(t)
+        for h in range(1, 28):
+            fh = h * f_fund
+            if fh >= fs / 2:
+                break
+            weight = sum(np.exp(-((fh - f_c) ** 2) / (2 * (120**2))) for f_c in formants) + 0.05
+            sig += (weight / h) * np.sin(2 * np.pi * fh * t)
+        sig = sig / np.max(np.abs(sig))
+        equation = r"x(t) = \sum \frac{A_k}{k} \sin(2\pi \cdot k f_0 \cdot t)"
+    elif source_type == "White Gaussian Noise":
+        sig = np.random.normal(0, 1.0, len(t))
+        equation = r"x(t) \sim \mathcal{N}(0, 1)"
+    elif source_type == "Square Wave":
+        sig = signal.square(2 * np.pi * f0 * t)
+        equation = rf"x(t) = \text{{sgn}}(\sin(2\pi \cdot {f0} \cdot t))"
+    elif source_type == "Sawtooth Wave":
+        sig = signal.sawtooth(2 * np.pi * f0 * t)
+        equation = rf"x(t) = 2 \left(\frac{{t}}{{T}} - \lfloor \frac{{t}}{{T}} \rfloor\right) - 1"
+    else:
+        sig = np.sin(2 * np.pi * f0 * t)
+        equation = "x(t) = \sin(2\pi f_0 t)"
+
+    return t, sig, fs, equation
+
+# -----------------------------------------------------------------------------
+# Streamlit Sidebar Controls
+# -----------------------------------------------------------------------------
+st.sidebar.title("⚡ DSP Studio Settings")
+
+signal_options = [
+    "Synthetic Voice (Formants)",
+    "Synthetic ECG (Heartbeat)",
+    "Pure Sine Wave",
+    "Multi-Tone Harmonics",
+    "Noisy Sine",
+    "Frequency Chirp",
+    "Square Wave",
+    "Sawtooth Wave",
+    "White Gaussian Noise",
+]
+selected_signal = st.sidebar.selectbox("Signal Source Generator", signal_options, index=0)
+
+fs_custom = 8000
+duration_custom = 3.0
+freq_param = 440
+
+if selected_signal in ["Pure Sine Wave", "Noisy Sine", "Square Wave", "Sawtooth Wave"]:
+    freq_param = st.sidebar.slider("Fundamental Frequency (Hz)", min_value=20, max_value=2000, value=440, step=10)
+
+t, sig, fs, eq_latex = generate_signal(selected_signal, duration=duration_custom, fs=fs_custom, f0=freq_param)
+nyquist = fs / 2.0
+
 st.sidebar.markdown("---")
+st.sidebar.subheader("🎛️ Digital Filter Parameters")
+filter_family = st.sidebar.radio("Filter Family", ["FIR", "IIR (Butterworth)"], index=0)
+filter_type = st.sidebar.selectbox("Filter Type", ["lowpass", "highpass", "bandpass", "notch"], index=0)
 
-# ============================================================================
-# 1D SIGNAL STUDIO
-# ============================================================================
-if app_mode == "📈 1D Signal Studio":
-    
-    st.sidebar.header("1. Signal Source")
-    source_options = [
-        "Upload a file",
-        "Demo: Real Audio (Voice)",
-        "Demo: ECG",
-        "Demo: Sensor",
-        "Demo: Pure Sine Wave",
-        "Demo: Multi-Tone Signal",
-        "Demo: Noisy Sine Wave",
-        "Demo: Square Wave",
-        "Demo: Triangle Wave",
-        "Demo: Sawtooth Wave",
-        "Demo: Chirp Signal",
-        "Demo: White Noise",
-        "Demo: Impulse (Delta) Signal",
-        "Demo: Step Signal"
-    ]
-    source = st.sidebar.selectbox("Source", source_options)
+cutoff1 = st.sidebar.slider("Cutoff Frequency f1 (Hz)", min_value=10, max_value=int(nyquist - 50), value=min(800, int(nyquist * 0.2)), step=10)
+cutoff2 = min(int(nyquist - 10), cutoff1 + 600)
+if filter_type in ["bandpass", "notch"]:
+    cutoff2 = st.sidebar.slider("Upper Cutoff f2 (Hz)", min_value=cutoff1 + 20, max_value=int(nyquist - 10), value=min(int(nyquist - 20), cutoff1 + 600), step=10)
 
-    fs = signal = None
+iir_order = 4
+fir_window = "hamming"
+if filter_family == "IIR (Butterworth)":
+    iir_order = st.sidebar.slider("Butterworth Filter Order (N)", min_value=1, max_value=10, value=4, step=1)
+else:
+    fir_window = st.sidebar.selectbox("FIR Window", ["hamming", "hann", "blackman", "boxcar"], index=0)
 
-    if source == "Upload a file":
-        with st.sidebar.popover("ℹ️ View Supported File Types", use_container_width=True):
-            st.markdown(
-                """
-                <div style="display: flex; gap: 40px;">
-                    <div>
-                        <h3 style="margin: 0px 0px 10px 0px;">Audio</h3>
-                        <ul style="margin: 0; padding-left: 20px;">
-                            <li>mp3</li><li>wav</li><li>m4a</li><li>aac</li>
-                            <li>flac</li><li>ogg</li><li>aiff</li><li>wma</li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h3 style="margin: 0px 0px 10px 0px;">Data</h3>
-                        <ul style="margin: 0; padding-left: 20px;">
-                            <li>csv</li><li>txt</li><li>mat</li><li>edf</li><li>bdf</li>
-                        </ul>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+# -----------------------------------------------------------------------------
+# Filter Design Engine
+# -----------------------------------------------------------------------------
+b, a = [1.0], [1.0]
+is_stable = True
 
-        st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
-        uploaded = st.sidebar.file_uploader("hidden_label", label_visibility="collapsed")
+if filter_family == "FIR":
+    numtaps = 101
+    if filter_type == "lowpass":
+        b = signal.firwin(numtaps, cutoff1, fs=fs, window=fir_window, pass_zero='lowpass')
+    elif filter_type == "highpass":
+        b = signal.firwin(numtaps, cutoff1, fs=fs, window=fir_window, pass_zero='highpass')
+    elif filter_type == "bandpass":
+        b = signal.firwin(numtaps, [cutoff1, cutoff2], fs=fs, window=fir_window, pass_zero='bandpass')
+    elif filter_type == "notch":
+        b = signal.firwin(numtaps, [cutoff1, cutoff2], fs=fs, window=fir_window, pass_zero='bandstop')
+    a = [1.0]
+else:
+    # IIR Butterworth Filter
+    Wn = cutoff1 / nyquist if filter_type in ["lowpass", "highpass"] else [cutoff1 / nyquist, cutoff2 / nyquist]
+    b_iir, a_iir = signal.butter(iir_order, Wn, btype='bandstop' if filter_type == 'notch' else filter_type)
+    b, a = b_iir, a_iir
 
-        if uploaded is not None:
-            ext = os.path.splitext(uploaded.name)[1].lower()
-            safe_filename = f"{uuid.uuid4().hex}_{uploaded.name}"
-            tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
+# Zero-Phase Filtering
+try:
+    filtered_sig = signal.filtfilt(b, a, sig)
+except Exception:
+    filtered_sig = signal.lfilter(b, a, sig)
 
-            with open(tmp_path, "wb") as f:
-                f.write(uploaded.getbuffer())
+# Compute Zeros & Poles
+z_roots, p_roots, k_gain = signal.tf2zpk(b, a)
+is_stable = np.all(np.abs(p_roots) < 1.0)
 
-            fs_override = None
-            if ext in ('.csv', '.txt'):
-                manual_fs = st.sidebar.number_input(
-                    "Sample rate in Hz (only needed for single-column CSV)",
-                    min_value=0, value=0, step=1
-                )
-                fs_override = float(manual_fs) if manual_fs > 0 else None
+# -----------------------------------------------------------------------------
+# Main Application Dashboard
+# -----------------------------------------------------------------------------
+st.title("⚡ Universal DSP Signal Analyzer & Filter Design Studio")
+st.markdown("Interactive 1D Signal Processing • 3D FFT Spectrums • 3D Waterfall Spectrograms • 3D Z-Plane Transfer Function Landscapes")
 
-            try:
-                fs, signal, n_interp, fs_warning = load_any_signal(tmp_path, fs_override=fs_override)
-                if n_interp:
-                    st.sidebar.warning(f"Interpolated {n_interp} missing value(s) found in the file.")
-                if fs_warning:
-                    st.sidebar.warning(fs_warning)
-            except ValueError as e:
-                if ext == '.mat':
-                    st.sidebar.warning(f"{e} Enter a sample rate below to proceed.")
-                    manual_fs = st.sidebar.number_input(
-                        "Sample rate in Hz", min_value=0, value=0, step=1, key="mat_fs_fallback"
-                    )
-                    if manual_fs <= 0:
-                        st.stop()
-                    try:
-                        fs, signal, n_interp, fs_warning = load_any_signal(tmp_path, fs_override=float(manual_fs))
-                        if n_interp:
-                            st.sidebar.warning(f"Interpolated {n_interp} missing value(s) found in the file.")
-                    except Exception as e2:
-                        st.sidebar.error(str(e2))
-                        st.stop()
-                else:
-                    st.sidebar.error(str(e))
-                    st.stop()
-            except Exception as e:
-                st.sidebar.error(str(e))
-                st.stop()
-        else:
-            st.info("Upload a file in the sidebar, or pick a demo source to try it instantly.")
-            st.stop()
-    elif source == "Demo: Real Audio (Voice)":
-        with st.spinner("Loading real audio sample..."):
-            try:
-                fs, signal = generate_real_audio_demo()
-            except Exception as e:
-                st.sidebar.error(str(e))
-                st.stop()
-    elif source == "Demo: ECG":
-        fs, signal = generate_ecg_demo()
-    elif source == "Demo: Sensor":
-        fs, signal = generate_sensor_demo()
-    elif source == "Demo: Pure Sine Wave":
-        fs, signal = gen_pure_sine()
-    elif source == "Demo: Multi-Tone Signal":
-        fs, signal = gen_multi_tone()
-    elif source == "Demo: Noisy Sine Wave":
-        fs, signal = gen_noisy_sine()
-    elif source == "Demo: Square Wave":
-        fs, signal = gen_square()
-    elif source == "Demo: Triangle Wave":
-        fs, signal = gen_triangle()
-    elif source == "Demo: Sawtooth Wave":
-        fs, signal = gen_sawtooth()
-    elif source == "Demo: Chirp Signal":
-        fs, signal = gen_chirp()
-    elif source == "Demo: White Noise":
-        fs, signal = gen_white_noise()
-    elif source == "Demo: Impulse (Delta) Signal":
-        fs, signal = gen_impulse()
-    elif source == "Demo: Step Signal":
-        fs, signal = gen_step()
+if eq_latex:
+    st.info(f"Signal Mathematical Equation: $${eq_latex}$$")
 
-    st.sidebar.success(f"{fs:.1f} Hz  |  {len(signal) / fs:.2f} sec  |  {len(signal)} samples")
-    full_signal = signal
+# Metrics Banner
+col1, col2, col3, col4, col5 = st.columns(5)
+peak_to_peak = np.ptp(sig)
+rms_val = np.sqrt(np.mean(sig**2))
+crest_factor = (np.max(np.abs(sig)) / rms_val) if rms_val > 1e-12 else 0.0
+mean_val = np.mean(sig)
+var_val = np.var(sig)
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("2. Trim Signal (Optional)")
-    full_duration = float(len(full_signal) / fs)
-    trim_start, trim_end = st.sidebar.slider(
-        "Select time range (seconds)", min_value=0.0, max_value=full_duration, value=(0.0, full_duration)
+col1.metric("Peak-to-Peak", f"{peak_to_peak:.4f}")
+col2.metric("RMS Power", f"{rms_val:.4f}")
+col3.metric("Crest Factor", f"{crest_factor:.4f}")
+col4.metric("Mean (DC)", f"{mean_val:.4f}")
+col5.metric("Variance (σ²)", f"{var_val:.4f}")
+
+# -----------------------------------------------------------------------------
+# Main Visualization Tabs
+# -----------------------------------------------------------------------------
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "📈 Time & Frequency", 
+    "🌊 3D Waterfall Spectrogram", 
+    "✨ 3D FFT Spectrum Landscape", 
+    "🏔️ 3D Z-Plane Transfer Function", 
+    "🎛️ Filter Analysis & Poles/Zeros"
+])
+
+# -----------------------------------------------------------------------------
+# TAB 1: Time & Frequency Domain
+# -----------------------------------------------------------------------------
+with tab1:
+    st.subheader("1. Waveform Comparison (Time Domain)")
+    fig_time = go.Figure()
+    fig_time.add_trace(go.Scatter(x=t[:1000], y=sig[:1000], mode='lines', name='Original Signal', line=dict(color='#64748b', width=1.5)))
+    fig_time.add_trace(go.Scatter(x=t[:1000], y=filtered_sig[:1000], mode='lines', name='Filtered Signal', line=dict(color='#38bdf8', width=2)))
+    fig_time.update_layout(
+        template="plotly_dark",
+        xaxis_title="Time (seconds)",
+        yaxis_title="Amplitude",
+        margin=dict(l=20, r=20, t=30, b=20),
+        height=350,
     )
+    st.plotly_chart(fig_time, use_container_width=True)
 
-    start_sample = int(trim_start * fs)
-    end_sample = int(trim_end * fs)
-    if end_sample > start_sample:
-        signal = full_signal[start_sample:end_sample]
-        st.sidebar.caption(f"✂️ Analyzing: {len(signal)} samples ({len(signal)/fs:.2f}s)")
-    else:
-        st.sidebar.error("Time range is too narrow. Select a wider range containing at least 1 sample.")
-        st.stop()
+    st.subheader("2. FFT Magnitude Spectrum")
+    freqs = fft.rfftfreq(len(sig), 1.0 / fs)
+    fft_orig = np.abs(fft.rfft(sig))
+    fft_filt = np.abs(fft.rfft(filtered_sig))
 
-    st.sidebar.markdown("---")
-    st.sidebar.header("3. Export Settings")
-    
-    graph_format = st.sidebar.selectbox("Graph Format", ["PNG", "PDF", "SVG"]).lower()
-    audio_format = st.sidebar.selectbox("Audio Format", ["WAV", "MP3", "FLAC"]).lower()
-    st.sidebar.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
-
-    graph_mime = {"png": "image/png", "pdf": "application/pdf", "svg": "image/svg+xml"}.get(graph_format, f"image/{graph_format}")
-    audio_mime = {"wav": "audio/wav", "mp3": "audio/mpeg", "flac": "audio/flac"}.get(audio_format, f"audio/{audio_format}")
-
-    # --- DYNAMIC SIGNAL EQUATIONS ---
-    equation = None
-    if "Impulse" in source:
-        equation = r"x[n] = \delta[n - n_0], \quad n_0 = \frac{N}{2}"
-    elif "Step" in source:
-        equation = r"x[n] = u[n - n_0], \quad n_0 = \frac{N}{2}"
-    elif "Pure Sine" in source:
-        equation = r"x[n] = \sin(2\pi f_0 n T_s)"
-    elif "Multi-Tone" in source:
-        equation = r"x[n] = \sin(2\pi f_1 n T_s) + 0.5\sin(2\pi f_2 n T_s) + 0.25\sin(2\pi f_3 n T_s)"
-    elif "Square" in source:
-        equation = r"x[n] = \frac{4}{\pi} \sum_{k=1,3,5,\dots}^{\infty} \frac{\sin(2\pi k f_0 n T_s)}{k}"
-    elif "Triangle" in source:
-        equation = r"x[n] = \frac{8}{\pi^2} \sum_{k=1,3,5,\dots}^{\infty} \frac{(-1)^{\frac{k-1}{2}}}{k^2} \sin(2\pi k f_0 n T_s)"
-    elif "Sawtooth" in source:
-        equation = r"x[n] = \frac{2}{\pi} \sum_{k=1}^{\infty} \frac{(-1)^{k+1}}{k} \sin(2\pi k f_0 n T_s)"
-    elif "Chirp" in source:
-        equation = r"x[n] = \sin\left(2\pi \left( f_0 + \frac{f_1 - f_0}{2T}n T_s \right) n T_s \right)"
-    elif "White Noise" in source:
-        equation = r"x[n] = w[n], \quad w[n] \sim \mathcal{N}(0, \sigma^2)"
-    elif "Noisy Sine" in source:
-        equation = r"x[n] = \sin(2\pi f_0 n T_s) + w[n], \quad w[n] \sim \mathcal{N}(0, \sigma^2)"
-
-    if equation:
-        st.markdown("### Signal Equation")
-        st.markdown(rf"$\displaystyle {equation}$")
-
-    st.header("Signal Metrics & Statistics")
-    peak_to_peak = float(np.max(signal) - np.min(signal))
-    rms = float(np.sqrt(np.mean(np.square(signal))))
-    peak_abs = float(np.max(np.abs(signal)))
-    crest_factor = (peak_abs / rms) if rms > 0 else 0.0
-    mean_val = float(np.mean(signal))
-    variance_val = float(np.var(signal))
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Peak-to-Peak Amplitude", f"{peak_to_peak:.4g}")
-    m2.metric("RMS Power", f"{rms:.4g}")
-    m3.metric("Crest Factor", f"{crest_factor:.4g}")
-    m4.metric("Mean", f"{mean_val:.4g}")
-    m5.metric("Variance", f"{variance_val:.4g}")
-
-    n = len(signal)
-    t = np.arange(n) / fs
-    freqs = np.fft.rfftfreq(n, 1 / fs)
-    
-    if source == "Demo: Impulse (Delta) Signal":
-        fft_complex = np.fft.rfft(signal)
-        magnitude = np.abs(fft_complex)
-    else:
-        fft_complex = np.fft.rfft(signal)
-        magnitude = np.abs(fft_complex) / n
-
-    st.header("Signal Analysis")
-    fig1, axs1 = plt.subplots(3, 1, figsize=(10, 8))
-    axs1[0].plot(t, signal, linewidth=0.7)
-    axs1[0].set_title("Waveform (Time Domain)")
-    axs1[0].set_xlabel("Time (s)"); axs1[0].set_ylabel("Amplitude")
-
-    axs1[1].plot(freqs, magnitude, linewidth=0.7)
-    axs1[1].set_title("Magnitude Spectrum (FFT)")
-    axs1[1].set_xlabel("Frequency (Hz)"); axs1[1].set_ylabel("Magnitude")
-    axs1[1].set_xlim(0, fs / 2)
-
-    if n >= 256:
-        f_spec, t_spec, Sxx = spectrogram(signal, fs, nperseg=min(1024, n), noverlap=min(512, n // 2))
-        im = axs1[2].pcolormesh(t_spec, f_spec, 10 * np.log10(Sxx + 1e-12), shading="gouraud")
-        axs1[2].set_title("Spectrogram")
-        axs1[2].set_xlabel("Time (s)")
-        axs1[2].set_ylabel("Frequency (Hz)")
-        fig1.colorbar(im, ax=axs1[2], label="dB")
-    else:
-        axs1[2].text(0.5, 0.5, "Not enough data for Spectrogram", ha='center', va='center', fontsize=12)
-        axs1[2].set_axis_off()
-
-    plt.tight_layout()
-    st.pyplot(fig1)
-
-    buf1 = io.BytesIO()
-    fig1.savefig(buf1, format=graph_format)
-    st.download_button(
-        label=f"📥 Download Analysis Graph ({graph_format.upper()})", data=buf1.getvalue(),
-        file_name=f"signal_analysis.{graph_format}", mime=graph_mime
+    fig_fft = go.Figure()
+    fig_fft.add_trace(go.Scatter(x=freqs, y=fft_orig, mode='lines', name='Original FFT', line=dict(color='#64748b', width=1.5)))
+    fig_fft.add_trace(go.Scatter(x=freqs, y=fft_filt, mode='lines', name='Filtered FFT', line=dict(color='#f43f5e', width=2)))
+    fig_fft.update_layout(
+        template="plotly_dark",
+        xaxis_title="Frequency (Hz)",
+        yaxis_title="Magnitude",
+        margin=dict(l=20, r=20, t=30, b=20),
+        height=350,
     )
-    plt.close(fig1)
+    st.plotly_chart(fig_fft, use_container_width=True)
 
-    # ========================================================================
-    # 🌟 3D FFT SPECTRUM (RESPONSIVE THREE.JS)
-    # ========================================================================
-    st.subheader("3D FFT Spectrum Landscape")
-    phase = np.angle(fft_complex)
-    render_exact_threejs_spectrum(freqs, phase, magnitude, fs)
-    # ========================================================================
+# -----------------------------------------------------------------------------
+# TAB 2: 3D Rolling Waterfall Spectrogram
+# -----------------------------------------------------------------------------
+with tab2:
+    st.subheader("🌊 3D Rolling Waterfall Spectrogram (Time × Frequency × Energy)")
+    st.caption("Interactive 3D topographic surface representing continuous frequency evolutions across time.")
 
-    st.header("Filter Design")
-    c1, c2, c3 = st.columns(3)
-    family = c1.selectbox("Family", ["FIR", "IIR"])
-    ftype = c2.selectbox("Filter type", ["lowpass", "highpass", "bandpass", "notch"])
+    f_stft, t_stft, Zxx = signal.stft(sig, fs=fs, nperseg=min(256, len(sig)//16))
+    Z_db = 20 * np.log10(np.abs(Zxx) + 1e-6)
 
-    window_type = "hamming"
-    iir_order = 4
-    if family == "FIR":
-        window_type = c3.selectbox("Window Function", ["hamming", "hann", "blackman", "bartlett", "boxcar"])
-    else:
-        iir_order = c3.number_input("Filter Order", min_value=1, max_value=12, value=4, step=1)
-
-    nyq = fs / 2
-    smax = round(nyq * 0.98, 1)
-    if smax < 1.0:
-        st.error("Sample rate is too low to design a filter here. Check the detected/entered sample rate.")
-        st.stop()
-    cutoff = st.slider("Cutoff (Hz)", min_value=1.0, max_value=float(smax), value=float(min(200.0, smax * 0.2)))
-    cutoff2 = None
-    needs_band = ftype in ("bandpass", "notch")
-    if needs_band:
-        cutoff2 = st.slider("Cutoff2 (Hz)", min_value=1.0, max_value=float(smax), value=float(min(1500.0, smax * 0.5)))
-        if cutoff2 <= cutoff:
-            st.error(f"Cutoff2 ({cutoff2:.0f} Hz) must be greater than Cutoff ({cutoff:.0f} Hz).")
-            st.stop()
-
-    if family == "FIR":
-        b, a = design_fir(ftype, fs, cutoff, cutoff2, window=window_type)
-    else:
-        b, a = design_iir(ftype, fs, cutoff, cutoff2, order=iir_order)
-
-    z, p, k = tf2zpk(b, a)
-    
-    if family == "FIR" and len(z) > 0:
-        p = np.zeros(len(z))
-
-    if len(p) > 0 and np.any(np.abs(p) >= 1.0):
-        st.error("⚠️ **Filter Instability Detected!** The calculated poles fall on or outside the Unit Circle. This IIR filter will mathematically explode.")
-        st.stop()  
-
-    try:
-        filtered, fallback_warning = apply_filter(b, a, signal)
-        if fallback_warning:
-            padlen = 3 * max(len(a), len(b))
-            st.warning(f"Signal too short for zero-phase filtering (needs > {padlen} samples) - using standard filtering.")
-            with st.popover("ℹ️ What is Zero-Phase Filtering?"):
-                st.write("**Zero-Phase Filtering** is a technique where a signal is filtered twice: once forward, and once backward.")
-                st.write("Standard filters introduce a slight time delay (phase shift), which pushes the signal slightly to the right. By running the filter backward the second time, this delay is completely canceled out. This ensures the peaks and valleys of your filtered signal remain perfectly aligned in time with the original data.")
-    except Exception as e:
-        st.error(f"Filtering failed: {e}")
-        st.stop()
-
-    freqs_f = np.fft.rfftfreq(len(filtered), 1 / fs)
-    mag_f = np.abs(np.fft.rfft(filtered)) / len(filtered)
-        
-    w, h = freqz(b, a, worN=2048, fs=fs)
-
-    title = f"{family} {ftype}  cutoff={cutoff:.0f}Hz" + (f", {cutoff2:.0f}Hz" if needs_band else "")
-
-    fig2, axs2 = plt.subplots(4, 1, figsize=(10, 12))
-    axs2[0].plot(t, signal, label="Original", alpha=0.6)
-    axs2[0].plot(t, filtered, label="Filtered", alpha=0.8)
-    axs2[0].set_title(title + " - Waveform")
-    axs2[0].set_xlabel("Time (s)"); axs2[0].legend()
-
-    axs2[1].plot(freqs, magnitude, label="Original", alpha=0.6)
-    axs2[1].plot(freqs_f, mag_f, label="Filtered", alpha=0.8)
-    axs2[1].set_title("Spectrum Comparison")
-    axs2[1].set_xlabel("Frequency (Hz)"); axs2[1].set_xlim(0, fs / 2); axs2[1].legend()
-
-    axs2[2].plot(w, 20 * np.log10(np.abs(h) + 1e-12))
-    axs2[2].set_title(f"{family} {ftype} Effective Frequency Response")
-    axs2[2].set_xlabel("Frequency (Hz)"); axs2[2].set_xlim(0, fs / 2); axs2[2].grid(alpha=0.3)
-
-    axs2[3].add_patch(plt.Circle((0, 0), 1, color='black', fill=False, linestyle='--', alpha=0.5, label='Unit Circle'))
-
-    if len(z) > 0:
-        axs2[3].scatter(np.real(z), np.imag(z), marker='o', edgecolors='b', facecolors='none', label='Zeros (O)')
-    if len(p) > 0:
-        axs2[3].scatter(np.real(p), np.imag(p), marker='x', color='r', label='Poles (X)')
-        
-    axs2[3].axhline(0, color='gray', alpha=0.3)
-    axs2[3].axvline(0, color='gray', alpha=0.3)
-    axs2[3].set_title("Filter Stability: Pole-Zero Plot (Z-Plane)")
-    axs2[3].set_xlabel("Real Axis"); axs2[3].set_ylabel("Imaginary Axis")
-    axs2[3].axis('equal') 
-    axs2[3].legend(loc='upper right')
-
-    plt.tight_layout()
-    st.pyplot(fig2)
-
-    st.subheader("Transfer Function")
-    tf_order = max(len(b), len(a)) - 1
-    st.caption(f"{family} {ftype} filter · order {tf_order} · {len(z)} zero(s) · {len(p)} pole(s)")
-
-    st.markdown("**Direct form** (from the filter coefficients `b`, `a`):")
-    st.latex(format_tf_polynomial_latex(b, a))
-
-    st.markdown("**Zero-Pole-Gain form** (matches the Z-plane plot above):")
-    st.latex(format_tf_zpk_latex(z, p, k))
-
-    if len(b) > 10 or len(a) > 10 or len(z) > 7 or len(p) > 7:
-        st.caption("⋯ marks omitted middle terms so the equation stays readable — the filter itself still uses every coefficient.")
-
-    buf2 = io.BytesIO()
-    fig2.savefig(buf2, format=graph_format)
-    st.download_button(
-        label=f"📥 Download Filter Graph ({graph_format.upper()})", data=buf2.getvalue(),
-        file_name=f"filter_comparison.{graph_format}", mime=graph_mime
+    fig_waterfall = go.Figure(data=[go.Surface(
+        x=t_stft,
+        y=f_stft,
+        z=Z_db,
+        colorscale="Turbo",
+        colorbar=dict(title="dB")
+    )])
+    fig_waterfall.update_layout(
+        template="plotly_dark",
+        scene=dict(
+            xaxis_title="Time (s)",
+            yaxis_title="Frequency (Hz)",
+            zaxis_title="Energy (dB)",
+            camera=dict(eye=dict(x=1.6, y=-1.6, z=1.2))
+        ),
+        margin=dict(l=10, r=10, t=20, b=10),
+        height=620,
     )
-    plt.close(fig2)
+    st.plotly_chart(fig_waterfall, use_container_width=True)
 
-    st.header("Listen")
+# -----------------------------------------------------------------------------
+# TAB 3: 3D FFT Spectrum Landscape (X: Freq, Y: Phase, Z: Magnitude)
+# -----------------------------------------------------------------------------
+with tab3:
+    st.subheader("✨ 3D Phase-Magnitude Harmonic Constellation")
+    st.caption("Viridis colored 3D spectral cloud mapping frequency harmonics, phase rotation angles, and spectral magnitude.")
 
-    global_peak = max(np.max(np.abs(full_signal)), np.max(np.abs(filtered)), 1e-9)
-    full_play_int = np.int16((full_signal / global_peak) * 32767)
-    filt_play_int = np.int16((filtered / global_peak) * 32767)
+    fft_complex = fft.rfft(sig)
+    fft_mag = np.abs(fft_complex)
+    fft_phase = np.angle(fft_complex)
 
-    ac1, ac2 = st.columns(2)
-    with ac1:
-        st.caption("Original (Full File)")
-        st.audio(full_play_int, sample_rate=int(fs))
-    with ac2:
-        st.caption(f"Filtered & Trimmed ({title})")
-        st.audio(filt_play_int, sample_rate=int(fs))
+    # Pick top 1500 points for fluid rendering
+    top_indices = np.argsort(fft_mag)[-1500:]
 
-        if audio_format == "wav":
-            wav_buf = io.BytesIO()
-            wavfile.write(wav_buf, int(fs), filt_play_int)
-            audio_data = wav_buf.getvalue()
-        else:
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as tmp_wav:
-                wavfile.write(tmp_wav.name, int(fs), filt_play_int)
-                tmp_out = tmp_wav.name.replace('.wav', f'.{audio_format}')
-                try:
-                    result = subprocess.run(['ffmpeg', '-y', '-i', tmp_wav.name, tmp_out], capture_output=True, text=True)
-                except FileNotFoundError:
-                    os.remove(tmp_wav.name)
-                    st.error("FFmpeg is not installed on the system. Choose WAV format instead.")
-                    st.stop()
-                if result.returncode != 0 or not os.path.exists(tmp_out):
-                    os.remove(tmp_wav.name)
-                    st.error(f"Encoding failed: {result.stderr.strip()[-500:]}")
-                    st.stop()
-                with open(tmp_out, 'rb') as f_out:
-                    audio_data = f_out.read()
-                os.remove(tmp_wav.name)
-                os.remove(tmp_out)
-
-        st.download_button(
-            label=f"🎵 Download Filtered Audio ({audio_format.upper()})", data=audio_data,
-            file_name=f"filtered_audio.{audio_format}", mime=audio_mime
+    fig_3d_scatter = go.Figure(data=[go.Scatter3d(
+        x=freqs[top_indices],
+        y=fft_phase[top_indices],
+        z=fft_mag[top_indices],
+        mode='markers',
+        marker=dict(
+            size=3,
+            color=fft_mag[top_indices],
+            colorscale='Viridis',
+            opacity=0.85
         )
-
-# ============================================================================
-# 2D IMAGE STUDIO
-# ============================================================================
-elif app_mode == "🖼️ 2D Image Studio":
-    
-    st.sidebar.header("1. Image Source")
-    
-    source_2d = st.sidebar.selectbox(
-        "Source", 
-        ["Upload a file", "Demo: 2D Zone Plate (Chirp)", "Demo: 2D Spatial Grating"]
+    )])
+    fig_3d_scatter.update_layout(
+        template="plotly_dark",
+        scene=dict(
+            xaxis_title="Frequency (Hz)",
+            yaxis_title="Phase (rad)",
+            zaxis_title="Magnitude",
+            camera=dict(eye=dict(x=1.7, y=-1.5, z=1.3))
+        ),
+        margin=dict(l=10, r=10, t=20, b=10),
+        height=620,
     )
+    st.plotly_chart(fig_3d_scatter, use_container_width=True)
 
-    original_array = None
+# -----------------------------------------------------------------------------
+# TAB 4: 3D Complex Z-Plane Transfer Function Landscape |H(z)|
+# -----------------------------------------------------------------------------
+with tab4:
+    st.subheader("🏔️ 3D Complex Z-Plane Transfer Function Landscape |H(z)|")
+    st.caption("Volcanic peaks reveal filter poles; sunken valleys reveal zeros. The cylinder outline marks the Unit Circle |z| = 1.")
 
-    if source_2d == "Upload a file":
-        with st.sidebar.popover("ℹ️ View Supported File Types", use_container_width=True):
-            st.markdown(
-                """
-                <div style="display: flex; gap: 40px;">
-                    <div>
-                        <h3 style="margin: 0px 0px 10px 0px;">Image Formats</h3>
-                        <ul style="margin: 0; padding-left: 20px;">
-                            <li>png</li><li>jpg</li><li>jpeg</li>
-                            <li>bmp</li><li>webp</li><li>tiff</li>
-                        </ul>
-                    </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-            
-        st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
-        uploaded_image = st.sidebar.file_uploader(
-            "hidden_label",
-            label_visibility="collapsed",
-            type=["png", "jpg", "jpeg", "bmp", "webp", "tiff"],
-            key="image_2d_uploader"
+    re_vals = np.linspace(-1.5, 1.5, 60)
+    im_vals = np.linspace(-1.5, 1.5, 60)
+    RE, IM = np.meshgrid(re_vals, im_vals)
+    Z_complex = RE + 1j * IM
+
+    # Evaluate H(z) = B(z) / A(z) where z^-1 is applied
+    Hz_mag = np.zeros_like(RE)
+    for i in range(RE.shape[0]):
+        for j in range(RE.shape[1]):
+            z_pt = Z_complex[i, j]
+            if np.abs(z_pt) < 1e-4:
+                continue
+            num = sum(b[k] * (z_pt ** (-k)) for k in range(len(b)))
+            den = sum(a[k] * (z_pt ** (-k)) for k in range(len(a)))
+            if np.abs(den) < 1e-4:
+                Hz_mag[i, j] = 10.0
+            else:
+                Hz_mag[i, j] = min(10.0, np.abs(num / den))
+
+    fig_zplane_3d = go.Figure(data=[go.Surface(
+        x=RE,
+        y=IM,
+        z=Hz_mag,
+        colorscale="Magma",
+        colorbar=dict(title="|H(z)|")
+    )])
+
+    # Unit circle ring
+    theta = np.linspace(0, 2 * np.pi, 100)
+    uc_x = np.cos(theta)
+    uc_y = np.sin(theta)
+    uc_z = np.zeros_like(theta)
+    fig_zplane_3d.add_trace(go.Scatter3d(
+        x=uc_x, y=uc_y, z=uc_z,
+        mode='lines',
+        line=dict(color='#38bdf8', width=5),
+        name='Unit Circle (|z|=1)'
+    ))
+
+    fig_zplane_3d.update_layout(
+        template="plotly_dark",
+        scene=dict(
+            xaxis_title="Re(z)",
+            yaxis_title="Im(z)",
+            zaxis_title="|H(z)| Magnitude",
+            camera=dict(eye=dict(x=1.5, y=-1.5, z=1.4))
+        ),
+        margin=dict(l=10, r=10, t=20, b=10),
+        height=620,
+    )
+    st.plotly_chart(fig_zplane_3d, use_container_width=True)
+
+# -----------------------------------------------------------------------------
+# TAB 5: Filter Analysis & Pole-Zero Diagram
+# -----------------------------------------------------------------------------
+with tab5:
+    col_pz1, col_pz2 = st.columns([1, 1])
+
+    with col_pz1:
+        st.subheader("Pole-Zero Diagram (Complex Z-Plane)")
+        fig_pz = go.Figure()
+        
+        # Unit Circle
+        theta = np.linspace(0, 2*np.pi, 200)
+        fig_pz.add_trace(go.Scatter(x=np.cos(theta), y=np.sin(theta), mode='lines', line=dict(dash='dash', color='#38bdf8'), name='Unit Circle'))
+
+        # Zeros
+        if len(z_roots) > 0:
+            fig_pz.add_trace(go.Scatter(x=np.real(z_roots), y=np.imag(z_roots), mode='markers', marker=dict(symbol='circle-open', size=10, color='#38bdf8', line=dict(width=2)), name='Zeros (o)'))
+        # Poles
+        if len(p_roots) > 0:
+            fig_pz.add_trace(go.Scatter(x=np.real(p_roots), y=np.imag(p_roots), mode='markers', marker=dict(symbol='x', size=10, color='#f43f5e', line=dict(width=2)), name='Poles (x)'))
+
+        fig_pz.update_layout(
+            template="plotly_dark",
+            xaxis_title="Real Part Re(z)",
+            yaxis_title="Imaginary Part Im(z)",
+            height=400,
+            xaxis=dict(range=[-1.6, 1.6]),
+            yaxis=dict(range=[-1.6, 1.6], scaleanchor="x", scaleratio=1),
+            margin=dict(l=20, r=20, t=20, b=20)
         )
+        st.plotly_chart(fig_pz, use_container_width=True)
 
-        if uploaded_image is not None:
-            try:
-                image_bytes = uploaded_image.getvalue()
-                original_array = load_image_array(image_bytes)
-            except Exception as e:
-                st.sidebar.error(f"Couldn't read this image: {e}")
-                st.stop()
-        else:
-            st.info("Upload an image in the sidebar, or pick a mathematical demo source to test 2D DSP.")
-            st.stop()
-            
-    elif source_2d == "Demo: 2D Zone Plate (Chirp)":
-        original_array = gen_zone_plate()
-    elif source_2d == "Demo: 2D Spatial Grating":
-        original_array = gen_2d_grating()
+    with col_pz2:
+        st.subheader("Filter Frequency Response |H(f)|")
+        w, h = signal.freqz(b, a, worN=1024, fs=fs)
+        h_db = 20 * np.log10(np.maximum(np.abs(h), 1e-5))
 
-    if original_array is not None:
-        pil_original = Image.fromarray(original_array)
-        
-        st.sidebar.markdown("---")
-        st.sidebar.header("2. Export Settings")
-        
-        image_format = st.sidebar.selectbox("Export Format", ["PNG", "JPG", "BMP", "PDF"]).lower()
-        
-        st.sidebar.markdown("<div style='height: 150px;'></div>", unsafe_allow_html=True)
-        
-        pil_format = "JPEG" if image_format == "jpg" else image_format.upper()
-        mime_format = "application/pdf" if image_format == "pdf" else f"image/{'jpeg' if image_format == 'jpg' else image_format}"
-
-        st.subheader("Original Image")
-        st.image(pil_original, use_container_width=True)
-        
-        st.markdown("---")
-        st.subheader("DSP Operations")
-        
-        operation = st.selectbox(
-            "2D DSP Operation",
-            [
-                "Sobel Edge Detection", 
-                "Gaussian Blur", 
-                "Image Sharpening",
-                "2D FFT (Frequency Spectrum)",
-                "Median Filtering",
-                "Image Binarization (Threshold)",
-                "Morphological Erosion",
-                "Morphological Dilation"
-            ],
-            key="image_2d_operation"
+        fig_h = go.Figure()
+        fig_h.add_trace(go.Scatter(x=w, y=h_db, mode='lines', line=dict(color='#10b981', width=2), name='|H(f)| dB'))
+        fig_h.update_layout(
+            template="plotly_dark",
+            xaxis_title="Frequency (Hz)",
+            yaxis_title="Magnitude (dB)",
+            height=400,
+            margin=dict(l=20, r=20, t=20, b=20)
         )
+        st.plotly_chart(fig_h, use_container_width=True)
 
-        sigma = 2.0
-        kernel_size = 3
-        threshold = 128
+    if not is_stable:
+        st.error("⚠️ Filter Instability Warning: Calculated IIR poles reside on or outside the Unit Circle (|p| >= 1.0)!")
+    else:
+        st.success("✅ Filter is BIBO Stable: All poles strictly reside inside the unit circle.")
 
-        if operation == "Gaussian Blur":
-            sigma = st.slider("Sigma (blur strength)", 0.1, 10.0, 2.0, 0.1)
-        elif operation in ["Median Filtering", "Morphological Erosion", "Morphological Dilation"]:
-            kernel_size = st.slider("Kernel Size (pixels)", min_value=3, max_value=21, value=5, step=2)
-        elif operation == "Image Binarization (Threshold)":
-            threshold = st.slider("Threshold Level", 0, 255, 128, 1)
-
-        if operation == "Sobel Edge Detection":
-            filtered_array = apply_sobel_edge_detection(original_array)
-            result_caption = "Gradient magnitude: sqrt(Gx^2 + Gy^2)"
-            
-        elif operation == "Gaussian Blur":
-            filtered_array = apply_gaussian_blur(original_array, sigma)
-            result_caption = f"Lowpass filter, sigma = {sigma}"
-            
-        elif operation == "Image Sharpening":  
-            filtered_array = apply_sharpening(original_array)
-            result_caption = "Highpass 3x3 convolution kernel"
-            
-        elif operation == "2D FFT (Frequency Spectrum)":
-            filtered_array = apply_fft2d(original_array)
-            result_caption = "2D Magnitude Spectrum (Log Scale) shifted to center"
-            
-        elif operation == "Median Filtering":
-            filtered_array = apply_median_filter(original_array, kernel_size)
-            result_caption = f"Median Filter (Non-linear Denoising), {kernel_size}x{kernel_size} footprint"
-            
-        elif operation == "Image Binarization (Threshold)":
-            filtered_array = apply_binarization(original_array, threshold)
-            result_caption = f"Binarized (Threshold > {threshold})"
-            
-        elif operation == "Morphological Erosion":
-            filtered_array = apply_erosion(original_array, kernel_size)
-            result_caption = f"Erosion (Local Minimum), {kernel_size}x{kernel_size} footprint"
-            
-        elif operation == "Morphological Dilation":
-            filtered_array = apply_dilation(original_array, kernel_size)
-            result_caption = f"Dilation (Local Maximum), {kernel_size}x{kernel_size} footprint"
-
-        pil_filtered = Image.fromarray(filtered_array)
-
-        st.markdown("---")
-        
-        st.subheader(f"Filtered Result: {operation}")
-        st.caption(result_caption)
-        
-        if operation == "2D FFT (Frequency Spectrum)":
-            st.image(pil_filtered, use_container_width=True, clamp=True)
-        else:
-            st.image(pil_filtered, use_container_width=True)
-
-        operation_slugs = {
-            "Sobel Edge Detection": "sobel_edges",
-            "Gaussian Blur": "gaussian_blur",
-            "Image Sharpening": "sharpened",
-            "2D FFT (Frequency Spectrum)": "fft2d",
-            "Median Filtering": "median",
-            "Image Binarization (Threshold)": "binary",
-            "Morphological Erosion": "erosion",
-            "Morphological Dilation": "dilation"
-        }
-        
-        download_buf = io.BytesIO()
-        pil_filtered.save(download_buf, format=pil_format)
-        
-        st.markdown("---")
-        st.download_button(
-            label=f"📥 Download Filtered Image ({image_format.upper()})",
-            data=download_buf.getvalue(),
-            file_name=f"filtered_{operation_slugs[operation]}.{image_format}",
-            mime=mime_format,
-            key="image_2d_download",
-        )
+st.markdown("---")
+st.caption("⚡ Universal DSP Signal Studio • Interactive WebGL / Plotly Scientific Visualization")
