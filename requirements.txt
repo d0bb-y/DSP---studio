@@ -6,3 +6,4 @@ Pillow
 h5py
 pyedflib
 plotly
+streamlit-mic-recorder
