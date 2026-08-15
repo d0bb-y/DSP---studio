@@ -1122,39 +1122,34 @@ if app_mode == "📈 1D Signal Studio":
     elif source == "Record Live Audio":
         st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
         
-        # Initialize custom session state to hold the audio
+        # Initialize custom session state to hold the audio safely
         if "recorded_bytes" not in st.session_state:
             st.session_state.recorded_bytes = None
 
+        # Callback function that runs BEFORE the main script to instantly rip the bytes
+        # out of the widget memory and destroy it before the frontend React player renders
+        def handle_audio_capture():
+            if st.session_state.get("live_audio_recorder") is not None:
+                st.session_state.recorded_bytes = st.session_state.live_audio_recorder.getvalue()
+
         # STATE 1: NO AUDIO -> Show the microphone widget
         if st.session_state.recorded_bytes is None:
-            # Wrap the widget in an empty container so we can instantly destroy it 
-            # to prevent the native Streamlit audio player from briefly rendering and crashing
-            recorder_container = st.sidebar.empty()
-            recorded_audio = recorder_container.audio_input(
+            st.sidebar.audio_input(
                 "🎙️ Record from your microphone",
-                key="live_audio_recorder"
+                key="live_audio_recorder",
+                on_change=handle_audio_capture
             )
-            
-            if recorded_audio is not None:
-                # Instantly clear the buggy UI container, save the bytes, and reload
-                recorder_container.empty()
-                st.session_state.recorded_bytes = recorded_audio.getvalue()
-                st.rerun()
-            else:
-                st.info("Record audio using the widget in the sidebar, or pick another source to try it instantly.")
-                st.stop()
+            st.info("Record audio using the widget in the sidebar, or pick another source to try it instantly.")
+            st.stop()
                 
         # STATE 2: AUDIO EXISTS -> Show preview & delete button instead of the microphone
         else:
-            # Increased bottom margin to give the audio widget breathing room
             st.sidebar.markdown("<p style='font-size: 14px; margin-bottom: 8px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
             
             p_col1, p_col2 = st.sidebar.columns([4, 1])
             with p_col1:
                 st.audio(st.session_state.recorded_bytes, format="audio/wav")
             with p_col2:
-                # Adjusted top margin for the button to align nicely with the audio player
                 st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
                 if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
                     # Delete custom state AND the widget's internal memory, then reset
