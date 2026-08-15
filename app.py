@@ -27,7 +27,7 @@ from PIL import Image
 st.set_page_config(page_title="Universal DSP Signal Analyzer", layout="wide", initial_sidebar_state="expanded")
 
 # ============================================================================
-# DSP ENGINE - Pure Logic (No Streamlit UI inside these functions)
+# DSP ENGINE - Pure Logic
 # ============================================================================
 
 def _strip_comment(line):
@@ -537,7 +537,7 @@ def apply_dilation(image_array, size):
 
 
 # ============================================================================
-# 🌟 THREE.JS WEBGL 3D SPECTRUM (LARGE 680px WINDOW & PERFECT BREATHING ROOM)
+# 🌟 THREE.JS WEBGL 3D SPECTRUM (SPACIOUS 780px WINDOW & BALANCED MARGINS)
 # ============================================================================
 
 def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
@@ -576,7 +576,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         #card {{
           position: relative;
           width: 100%;
-          height: 680px;
+          height: 760px;
           border-radius: 16px;
           border: 1px solid #1e293b;
           background: #030712;
@@ -587,14 +587,14 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         /* TOP HEADER & AXIS BADGES */
         #header {{
-          padding: 12px 16px 8px 16px;
+          padding: 12px 18px;
           display: flex;
           flex-wrap: wrap;
           align-items: center;
           justify-content: space-between;
           gap: 8px;
-          border-bottom: 1px solid rgba(30, 41, 59, 0.6);
-          background: rgba(3, 7, 18, 0.85);
+          border-bottom: 1px solid rgba(30, 41, 59, 0.7);
+          background: rgba(3, 7, 18, 0.9);
           backdrop-filter: blur(10px);
           z-index: 10;
         }}
@@ -602,7 +602,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         .header-left {{
           display: flex;
           align-items: center;
-          gap: 8px;
+          gap: 10px;
           flex-wrap: wrap;
         }}
 
@@ -621,7 +621,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           color: #38bdf8;
           background: rgba(6, 182, 212, 0.12);
           border: 1px solid rgba(6, 182, 212, 0.35);
-          padding: 3px 8px;
+          padding: 3px 9px;
           border-radius: 9999px;
           white-space: nowrap;
         }}
@@ -638,7 +638,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           background: #0f172a;
           color: #94a3b8;
           border: 1px solid #334155;
-          padding: 5px 9px;
+          padding: 5px 10px;
           border-radius: 7px;
           font-size: 11px;
           font-weight: 500;
@@ -665,20 +665,21 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         /* CORNER AXIS ORIENTATION OVERLAY */
         #axis-overlay {{
           position: absolute;
-          top: 12px;
-          left: 16px;
+          top: 14px;
+          left: 18px;
           display: flex;
           flex-direction: column;
           gap: 4px;
           font-family: ui-monospace, SFMono-Regular, monospace;
           font-size: 11px;
           color: #64748b;
-          background: rgba(15, 23, 42, 0.75);
-          padding: 7px 10px;
+          background: rgba(15, 23, 42, 0.8);
+          padding: 6px 10px;
           border-radius: 8px;
-          border: 1px solid rgba(51, 65, 85, 0.6);
+          border: 1px solid rgba(51, 65, 85, 0.5);
           pointer-events: none;
           z-index: 5;
+          backdrop-filter: blur(4px);
         }}
         .axis-item {{ display: flex; align-items: center; gap: 6px; }}
         .tag-x {{ color: #38bdf8; font-weight: bold; }}
@@ -687,14 +688,14 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         /* BOTTOM FOOTER & LEGEND */
         #footer {{
-          padding: 10px 16px;
+          padding: 10px 18px;
           display: flex;
           flex-wrap: wrap;
           align-items: center;
           justify-content: space-between;
           gap: 8px;
-          border-top: 1px solid rgba(30, 41, 59, 0.6);
-          background: rgba(3, 7, 18, 0.85);
+          border-top: 1px solid rgba(30, 41, 59, 0.7);
+          background: rgba(3, 7, 18, 0.9);
           font-size: 11px;
           color: #94a3b8;
           z-index: 10;
@@ -703,7 +704,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         .legend-group {{
           display: flex;
           align-items: center;
-          gap: 12px;
+          gap: 14px;
           flex-wrap: nowrap;
         }}
 
@@ -772,7 +773,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const container = document.getElementById('canvas-container');
         
         let width = container.clientWidth || window.innerWidth;
-        let height = container.clientHeight || 580;
+        let height = container.clientHeight || 660;
 
         let isRotating = true;
         let isDragging = false;
@@ -780,14 +781,14 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         let rotation = {{ x: 0.36, y: -0.62 }};
         
         // GENEROUS DEFAULT ZOOM & FRAMING
-        let zoomDist = 19.5;
+        let zoomDist = 22.5;
 
         // 1. Three.js Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x030712);
 
-        // 2. Camera Setup (Perspective tuned to 38 degrees FOV)
-        const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 1000);
+        // 2. Camera Setup (Perspective tuned to 35 degrees FOV for spacious composition)
+        const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 1000);
         camera.position.set(0, 0, zoomDist);
 
         // 3. WebGL Renderer
@@ -796,12 +797,12 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
 
-        // 4. Object Group (Lifted vertically by 0.5 to keep bottom floor far away from footer)
+        // 4. Object Group (Centered vertically with ample clearance from top and bottom)
         const rootGroup = new THREE.Group();
-        rootGroup.position.y = 0.5;
+        rootGroup.position.y = 0.2;
         scene.add(rootGroup);
 
-        const boxSize = 8;
+        const boxSize = 7.0;
         const halfBox = boxSize / 2;
 
         // Cyan Floor Grid
@@ -814,7 +815,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const boxEdges = new THREE.EdgesGeometry(boxGeom);
         const boxLine = new THREE.LineSegments(
           boxEdges,
-          new THREE.LineBasicMaterial({{ color: 0x334155, transparent: true, opacity: 0.45 }})
+          new THREE.LineBasicMaterial({{ color: 0x334155, transparent: true, opacity: 0.4 }})
         );
         rootGroup.add(boxLine);
 
@@ -842,7 +843,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           const y = (p / Math.PI) * halfBox;
           const z = (m / maxMag) * boxSize - halfBox;
 
-          positions.push(x, z, y); // Magnitude is mapped vertically (Z coordinate)
+          positions.push(x, z, y); // Magnitude mapped vertically
 
           const col = viridisColor(m / maxMag);
           colors.push(col.r, col.g, col.b);
@@ -852,21 +853,21 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         particlesGeom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         particlesGeom.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 
-        // Soft Radial Glow Particle Shader Texture
+        // Soft Glow Particle Texture
         const pCanvas = document.createElement('canvas');
         pCanvas.width = 32;
         pCanvas.height = 32;
         const ctx = pCanvas.getContext('2d');
         const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
         grad.addColorStop(0, 'rgba(255, 255, 255, 1)');
-        grad.addColorStop(0.4, 'rgba(255, 255, 255, 0.75)');
+        grad.addColorStop(0.45, 'rgba(255, 255, 255, 0.7)');
         grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, 32, 32);
 
         const texture = new THREE.CanvasTexture(pCanvas);
         const particlesMat = new THREE.PointsMaterial({{
-          size: 0.28,
+          size: 0.24,
           vertexColors: true,
           map: texture,
           transparent: true,
@@ -898,7 +899,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         dom.addEventListener('wheel', (e) => {{
           e.preventDefault();
-          zoomDist = Math.max(8, Math.min(34, zoomDist + e.deltaY * 0.015));
+          zoomDist = Math.max(8, Math.min(36, zoomDist + e.deltaY * 0.015));
         }}, {{ passive: false }});
 
         function toggleRotate() {{
@@ -907,12 +908,12 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         }}
 
         function zoom(delta) {{
-          zoomDist = Math.max(8, Math.min(34, zoomDist + delta));
+          zoomDist = Math.max(8, Math.min(36, zoomDist + delta));
         }}
 
         function resetView() {{
           rotation = {{ x: 0.36, y: -0.62 }};
-          zoomDist = 19.5;
+          zoomDist = 22.5;
         }}
 
         function snapshot() {{
@@ -947,7 +948,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         // Responsive Resize Observer
         const resizeObserver = new ResizeObserver(() => {{
           width = container.clientWidth || window.innerWidth;
-          height = container.clientHeight || 580;
+          height = container.clientHeight || 660;
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
           renderer.setSize(width, height);
@@ -957,7 +958,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
     </body>
     </html>
     """
-    components.html(html_code, height=700)
+    components.html(html_code, height=780)
 
 
 # ============================================================================
@@ -1218,7 +1219,7 @@ if app_mode == "📈 1D Signal Studio":
     plt.close(fig1)
 
     # ========================================================================
-    # 🌟 3D FFT SPECTRUM (LARGE 680px WINDOW & PERFECT BREATHING ROOM)
+    # 🌟 3D FFT SPECTRUM (SPACIOUS 780px WINDOW & BALANCED MARGINS)
     # ========================================================================
     st.subheader("3D FFT Spectrum Landscape")
     phase = np.angle(fft_complex)
