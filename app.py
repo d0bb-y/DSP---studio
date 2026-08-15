@@ -138,7 +138,13 @@ def load_wav_signal(filename):
         converted_path = convert_audio_to_wav(filename)
         return load_wav_signal(converted_path)
 
-    fs, signal = wavfile.read(filename)
+    try:
+        fs, signal = wavfile.read(filename)
+    except ValueError:
+        # Fallback if standard wavfile parser fails on non-standard chunks
+        converted_path = convert_audio_to_wav(filename)
+        fs, signal = wavfile.read(converted_path)
+
     if signal.dtype == np.int16:
         signal = signal.astype(np.float32) / 32768.0
     elif signal.dtype == np.int32:
@@ -1136,6 +1142,25 @@ if app_mode == "📈 1D Signal Studio":
             st.stop()
             
     elif source == "Record Live Audio":
+        st.sidebar.markdown(
+            """
+            <style>
+            /* Suppress st.audio_input's transient internal WebAudio decode error banner on mobile Safari */
+            [data-testid="stAudioInputError"],
+            [data-testid="stAudioInput"] [data-testid="stAudioInputError"],
+            [data-testid="stAudioInput"] [class*="Error"],
+            [data-testid="stAudioInput"] [class*="error"],
+            [data-testid="stAudioInput"] [role="alert"] {
+                display: none !important;
+                visibility: hidden !important;
+                opacity: 0 !important;
+                height: 0 !important;
+                pointer-events: none !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True
+        )
         st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
 
         if "recorder_key_version" not in st.session_state:
