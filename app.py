@@ -537,7 +537,7 @@ def apply_dilation(image_array, size):
 
 
 # ============================================================================
-# 🌟 THREE.JS WEBGL 3D SPECTRUM (PERFECT EDGE FRAMING & RESPONSIVE FIT)
+# 🌟 THREE.JS WEBGL 3D SPECTRUM (LARGE 680px WINDOW & PERFECT BREATHING ROOM)
 # ============================================================================
 
 def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
@@ -576,7 +576,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         #card {{
           position: relative;
           width: 100%;
-          height: 540px;
+          height: 680px;
           border-radius: 16px;
           border: 1px solid #1e293b;
           background: #030712;
@@ -665,29 +665,29 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         /* CORNER AXIS ORIENTATION OVERLAY */
         #axis-overlay {{
           position: absolute;
-          top: 10px;
-          left: 14px;
+          top: 12px;
+          left: 16px;
           display: flex;
           flex-direction: column;
-          gap: 3px;
+          gap: 4px;
           font-family: ui-monospace, SFMono-Regular, monospace;
-          font-size: 10px;
+          font-size: 11px;
           color: #64748b;
-          background: rgba(15, 23, 42, 0.7);
-          padding: 6px 9px;
-          border-radius: 6px;
-          border: 1px solid rgba(51, 65, 85, 0.5);
+          background: rgba(15, 23, 42, 0.75);
+          padding: 7px 10px;
+          border-radius: 8px;
+          border: 1px solid rgba(51, 65, 85, 0.6);
           pointer-events: none;
           z-index: 5;
         }}
-        .axis-item {{ display: flex; align-items: center; gap: 5px; }}
+        .axis-item {{ display: flex; align-items: center; gap: 6px; }}
         .tag-x {{ color: #38bdf8; font-weight: bold; }}
         .tag-y {{ color: #a855f7; font-weight: bold; }}
         .tag-z {{ color: #10b981; font-weight: bold; }}
 
         /* BOTTOM FOOTER & LEGEND */
         #footer {{
-          padding: 8px 16px;
+          padding: 10px 16px;
           display: flex;
           flex-wrap: wrap;
           align-items: center;
@@ -739,8 +739,8 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
           <div id="toolbar">
             <button id="btn-rotate" class="btn active" onclick="toggleRotate()">⟳ Rotate</button>
-            <button class="btn" onclick="zoom(-1.8)">+ Zoom</button>
-            <button class="btn" onclick="zoom(1.8)">- Zoom</button>
+            <button class="btn" onclick="zoom(-2.0)">+ Zoom</button>
+            <button class="btn" onclick="zoom(2.0)">- Zoom</button>
             <button class="btn" onclick="resetView()">Reset</button>
             <button class="btn" onclick="snapshot()">📷 Save</button>
           </div>
@@ -772,22 +772,22 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const container = document.getElementById('canvas-container');
         
         let width = container.clientWidth || window.innerWidth;
-        let height = container.clientHeight || 440;
+        let height = container.clientHeight || 580;
 
         let isRotating = true;
         let isDragging = false;
         let prevMouse = {{ x: 0, y: 0 }};
-        let rotation = {{ x: 0.42, y: -0.68 }};
+        let rotation = {{ x: 0.36, y: -0.62 }};
         
-        // TUNED DEFAULT ZOOM: Gives comfortable margin around all 12 outer edges & corners
-        let zoomDist = 17.5;
+        // GENEROUS DEFAULT ZOOM & FRAMING
+        let zoomDist = 19.5;
 
         // 1. Three.js Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x030712);
 
-        // 2. Camera Setup (Perspective tuned to 40 degrees FOV)
-        const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 1000);
+        // 2. Camera Setup (Perspective tuned to 38 degrees FOV)
+        const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 1000);
         camera.position.set(0, 0, zoomDist);
 
         // 3. WebGL Renderer
@@ -796,8 +796,9 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
 
-        // 4. Object Group
+        // 4. Object Group (Lifted vertically by 0.5 to keep bottom floor far away from footer)
         const rootGroup = new THREE.Group();
+        rootGroup.position.y = 0.5;
         scene.add(rootGroup);
 
         const boxSize = 8;
@@ -897,7 +898,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         dom.addEventListener('wheel', (e) => {{
           e.preventDefault();
-          zoomDist = Math.max(8, Math.min(32, zoomDist + e.deltaY * 0.015));
+          zoomDist = Math.max(8, Math.min(34, zoomDist + e.deltaY * 0.015));
         }}, {{ passive: false }});
 
         function toggleRotate() {{
@@ -906,12 +907,12 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         }}
 
         function zoom(delta) {{
-          zoomDist = Math.max(8, Math.min(32, zoomDist + delta));
+          zoomDist = Math.max(8, Math.min(34, zoomDist + delta));
         }}
 
         function resetView() {{
-          rotation = {{ x: 0.42, y: -0.68 }};
-          zoomDist = 17.5;
+          rotation = {{ x: 0.36, y: -0.62 }};
+          zoomDist = 19.5;
         }}
 
         function snapshot() {{
@@ -946,7 +947,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         // Responsive Resize Observer
         const resizeObserver = new ResizeObserver(() => {{
           width = container.clientWidth || window.innerWidth;
-          height = container.clientHeight || 440;
+          height = container.clientHeight || 580;
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
           renderer.setSize(width, height);
@@ -956,7 +957,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
     </body>
     </html>
     """
-    components.html(html_code, height=560)
+    components.html(html_code, height=700)
 
 
 # ============================================================================
@@ -1217,7 +1218,7 @@ if app_mode == "📈 1D Signal Studio":
     plt.close(fig1)
 
     # ========================================================================
-    # 🌟 3D FFT SPECTRUM (PERFECT EDGE FRAMING & RESPONSIVE FIT)
+    # 🌟 3D FFT SPECTRUM (LARGE 680px WINDOW & PERFECT BREATHING ROOM)
     # ========================================================================
     st.subheader("3D FFT Spectrum Landscape")
     phase = np.angle(fft_complex)
