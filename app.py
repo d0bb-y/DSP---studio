@@ -1121,60 +1121,81 @@ if app_mode == "📈 1D Signal Studio":
             
     elif source == "Record Live Audio":
         st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
-        
-        # Initialize custom session state to hold the audio safely
-        if "recorded_bytes" not in st.session_state:
-            st.session_state.recorded_bytes = None
 
-        # Callback function that runs BEFORE the main script to instantly rip the bytes
-        # out of the widget memory and destroy it before the frontend React player renders
-        def handle_audio_capture():
-            if st.session_state.get("live_audio_recorder") is not None:
-                st.session_state.recorded_bytes = st.session_state.live_audio_recorder.getvalue()
+        if "recorder_key_version" not in st.session_state:
+            st.session_state.recorder_key_version = 0
+        recorder_key = f"live_audio_recorder_{st.session_state.recorder_key_version}"
 
-        # STATE 1: NO AUDIO -> Show the microphone widget
-        if st.session_state.recorded_bytes is None:
-            st.sidebar.audio_input(
+        # st.audio_input is rendered UNCONDITIONALLY on every rerun, in the same
+        # container, for as long as this source is selected - it is never skipped
+        # once a recording exists. That's the actual fix. The crash happened
+        # because the previous code stopped calling st.audio_input() on the exact
+        # rerun where a recording finished: Streamlit's frontend reads "no delta
+        # for this widget this run" as "tear it out of the tree", but the widget's
+        # own React component was still busy switching itself from its recording
+        # UI to its built-in playback UI at that instant. Yanking the DOM node out
+        # from under a component mid-transition is what threw the exception behind
+        # the grey "An error has occurred" box. A callback can't prevent that -
+        # callbacks run on the Python side before a rerun, not before the browser
+        # paints, so it never had a chance to help.
+        # Instead of removing the widget, we fade it out with CSS once a recording
+        # exists. It keeps quietly living underneath, so its own internal
+        # transition always has somewhere safe to land.
+        recorder_box = st.sidebar.container(key="live_recorder_box")
+        with recorder_box:
+            recorded_audio = st.audio_input(
                 "🎙️ Record from your microphone",
-                key="live_audio_recorder",
-                on_change=handle_audio_capture
+                sample_rate=44100,
+                key=recorder_key,
             )
+
+        if recorded_audio is None:
             st.info("Record audio using the widget in the sidebar, or pick another source to try it instantly.")
             st.stop()
-                
-        # STATE 2: AUDIO EXISTS -> Show preview & delete button instead of the microphone
-        else:
-            st.sidebar.markdown("<p style='font-size: 14px; margin-bottom: 8px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
-            
-            p_col1, p_col2 = st.sidebar.columns([4, 1])
-            with p_col1:
-                st.audio(st.session_state.recorded_bytes, format="audio/wav")
-            with p_col2:
-                st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-                if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
-                    # Delete custom state AND the widget's internal memory, then reset
-                    st.session_state.recorded_bytes = None
-                    if "live_audio_recorder" in st.session_state:
-                        del st.session_state["live_audio_recorder"]
-                    st.rerun()
 
-            # Process the saved audio normally
-            safe_filename = f"{uuid.uuid4().hex}_live_recording.wav"
-            tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
+        # Hide the (still-mounted) native widget and show our own preview instead.
+        # Keyed containers get an auto-generated .st-key-<key> class, so this only
+        # ever touches this one box. Streamlit doesn't guarantee the exact class
+        # name/placement across versions, so re-check with devtools if a future
+        # upgrade ever makes this selector stop matching.
+        st.sidebar.markdown(
+            "<style>.st-key-live_recorder_box { display: none; }</style>",
+            unsafe_allow_html=True,
+        )
 
-            with open(tmp_path, "wb") as f:
-                f.write(st.session_state.recorded_bytes)
+        st.sidebar.markdown("<p style='font-size: 14px; margin-bottom: 8px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
 
-            try:
-                fs, signal, n_interp, fs_warning = load_any_signal(tmp_path)
-                if n_interp:
-                    st.sidebar.warning(f"Interpolated {n_interp} missing value(s) found in the recording.")
-                if fs_warning:
-                    st.sidebar.warning(fs_warning)
-            except Exception as e:
-                st.sidebar.error(str(e))
-                st.stop()
-            
+        p_col1, p_col2 = st.sidebar.columns([4, 1])
+        with p_col1:
+            st.audio(recorded_audio, format="audio/wav")
+        with p_col2:
+            st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+            if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
+                # Reset by changing the widget's key rather than touching its
+                # session_state entry directly - this is Streamlit's own
+                # recommended way to clear an upload-family widget, and it
+                # guarantees a genuinely fresh component with nothing left over
+                # on the frontend from the old recording.
+                st.session_state.recorder_key_version += 1
+                st.rerun()
+
+        # Process the recorded audio normally - identical to the uploaded-file path.
+        safe_filename = f"{uuid.uuid4().hex}_live_recording.wav"
+        tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
+
+        with open(tmp_path, "wb") as f:
+            f.write(recorded_audio.getbuffer())
+
+        try:
+            fs, signal, n_interp, fs_warning = load_any_signal(tmp_path)
+            if n_interp:
+                st.sidebar.warning(f"Interpolated {n_interp} missing value(s) found in the recording.")
+            if fs_warning:
+                st.sidebar.warning(fs_warning)
+        except Exception as e:
+            st.sidebar.error(str(e))
+            st.stop()
+
     elif source == "Demo: Real Audio (Voice)":
         with st.spinner("Loading real audio sample..."):
             try:
