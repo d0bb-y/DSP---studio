@@ -537,7 +537,7 @@ def apply_dilation(image_array, size):
 
 
 # ============================================================================
-# 🌟 THREE.JS WEBGL 3D SPECTRUM (SPACIOUS 780px WINDOW & BALANCED MARGINS)
+# 🌟 THREE.JS WEBGL 3D SPECTRUM (RESPONSIVE FOR PHONES & DESKTOPS)
 # ============================================================================
 
 def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
@@ -567,7 +567,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
     <html>
     <head>
       <meta charset="utf-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
       <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
       <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }}
@@ -576,8 +576,8 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         #card {{
           position: relative;
           width: 100%;
-          height: 760px;
-          border-radius: 16px;
+          height: 640px;
+          border-radius: 14px;
           border: 1px solid #1e293b;
           background: #030712;
           overflow: hidden;
@@ -587,14 +587,14 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         /* TOP HEADER & AXIS BADGES */
         #header {{
-          padding: 12px 18px;
+          padding: 10px 14px;
           display: flex;
           flex-wrap: wrap;
           align-items: center;
           justify-content: space-between;
-          gap: 8px;
+          gap: 6px;
           border-bottom: 1px solid rgba(30, 41, 59, 0.7);
-          background: rgba(3, 7, 18, 0.9);
+          background: rgba(3, 7, 18, 0.92);
           backdrop-filter: blur(10px);
           z-index: 10;
         }}
@@ -602,26 +602,26 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         .header-left {{
           display: flex;
           align-items: center;
-          gap: 10px;
+          gap: 8px;
           flex-wrap: wrap;
         }}
 
         .pulse-dot {{
-          width: 8px;
-          height: 8px;
+          width: 7px;
+          height: 7px;
           border-radius: 50%;
           background: #38bdf8;
-          box-shadow: 0 0 10px #38bdf8;
+          box-shadow: 0 0 8px #38bdf8;
         }}
 
         .axis-badge {{
           font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-          font-size: 11px;
+          font-size: 10px;
           font-weight: 600;
           color: #38bdf8;
           background: rgba(6, 182, 212, 0.12);
           border: 1px solid rgba(6, 182, 212, 0.35);
-          padding: 3px 9px;
+          padding: 2px 7px;
           border-radius: 9999px;
           white-space: nowrap;
         }}
@@ -630,27 +630,28 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         #toolbar {{
           display: flex;
           align-items: center;
-          gap: 6px;
-          flex-wrap: nowrap;
+          gap: 4px;
+          flex-wrap: wrap;
         }}
 
         .btn {{
           background: #0f172a;
           color: #94a3b8;
           border: 1px solid #334155;
-          padding: 5px 10px;
-          border-radius: 7px;
+          padding: 4px 8px;
+          border-radius: 6px;
           font-size: 11px;
           font-weight: 500;
           cursor: pointer;
           transition: all 0.2s ease;
           display: inline-flex;
           align-items: center;
-          gap: 4px;
+          gap: 3px;
           white-space: nowrap;
           user-select: none;
+          touch-action: manipulation;
         }}
-        .btn:hover {{ color: #38bdf8; border-color: #38bdf8; background: #1e293b; }}
+        .btn:hover, .btn:active {{ color: #38bdf8; border-color: #38bdf8; background: #1e293b; }}
         .btn.active {{ background: rgba(6, 182, 212, 0.2); color: #38bdf8; border-color: rgba(6, 182, 212, 0.5); }}
 
         /* CANVAS VIEWPORT */
@@ -659,44 +660,45 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           width: 100%;
           position: relative;
           cursor: grab;
+          touch-action: none;
         }}
         #viewport:active {{ cursor: grabbing; }}
 
         /* CORNER AXIS ORIENTATION OVERLAY */
         #axis-overlay {{
           position: absolute;
-          top: 14px;
-          left: 18px;
+          top: 10px;
+          left: 12px;
           display: flex;
           flex-direction: column;
-          gap: 4px;
+          gap: 2px;
           font-family: ui-monospace, SFMono-Regular, monospace;
-          font-size: 11px;
+          font-size: 10px;
           color: #64748b;
-          background: rgba(15, 23, 42, 0.8);
-          padding: 6px 10px;
-          border-radius: 8px;
-          border: 1px solid rgba(51, 65, 85, 0.5);
+          background: rgba(15, 23, 42, 0.75);
+          padding: 5px 8px;
+          border-radius: 6px;
+          border: 1px solid rgba(51, 65, 85, 0.4);
           pointer-events: none;
           z-index: 5;
           backdrop-filter: blur(4px);
         }}
-        .axis-item {{ display: flex; align-items: center; gap: 6px; }}
+        .axis-item {{ display: flex; align-items: center; gap: 5px; }}
         .tag-x {{ color: #38bdf8; font-weight: bold; }}
         .tag-y {{ color: #a855f7; font-weight: bold; }}
         .tag-z {{ color: #10b981; font-weight: bold; }}
 
         /* BOTTOM FOOTER & LEGEND */
         #footer {{
-          padding: 10px 18px;
+          padding: 8px 14px;
           display: flex;
           flex-wrap: wrap;
           align-items: center;
           justify-content: space-between;
-          gap: 8px;
+          gap: 6px;
           border-top: 1px solid rgba(30, 41, 59, 0.7);
-          background: rgba(3, 7, 18, 0.9);
-          font-size: 11px;
+          background: rgba(3, 7, 18, 0.92);
+          font-size: 10px;
           color: #94a3b8;
           z-index: 10;
         }}
@@ -704,20 +706,20 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         .legend-group {{
           display: flex;
           align-items: center;
-          gap: 14px;
-          flex-wrap: nowrap;
+          gap: 10px;
+          flex-wrap: wrap;
         }}
 
         .legend-item {{
           display: inline-flex;
           align-items: center;
-          gap: 5px;
+          gap: 4px;
           white-space: nowrap;
         }}
 
         .dot {{
-          width: 8px;
-          height: 8px;
+          width: 7px;
+          height: 7px;
           border-radius: 50%;
           display: inline-block;
           flex-shrink: 0;
@@ -735,13 +737,13 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         <div id="header">
           <div class="header-left">
             <div class="pulse-dot"></div>
-            <div class="axis-badge">X: Freq | Y: Phase | Z: Magnitude</div>
+            <div class="axis-badge">X: Freq | Y: Phase | Z: Mag</div>
           </div>
 
           <div id="toolbar">
             <button id="btn-rotate" class="btn active" onclick="toggleRotate()">⟳ Rotate</button>
-            <button class="btn" onclick="zoom(-2.0)">+ Zoom</button>
-            <button class="btn" onclick="zoom(2.0)">- Zoom</button>
+            <button class="btn" onclick="zoom(-2.5)">+ Zoom</button>
+            <button class="btn" onclick="zoom(2.5)">- Zoom</button>
             <button class="btn" onclick="resetView()">Reset</button>
             <button class="btn" onclick="snapshot()">📷 Save</button>
           </div>
@@ -750,9 +752,9 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         <!-- 3D VIEWPORT -->
         <div id="viewport">
           <div id="axis-overlay">
-            <div class="axis-item"><span class="tag-x">X:</span> Frequency (0 → {fs/2:.0f} Hz)</div>
-            <div class="axis-item"><span class="tag-y">Y:</span> Phase (-π → +π rad)</div>
-            <div class="axis-item"><span class="tag-z">Z:</span> Magnitude (Vertical Height)</div>
+            <div class="axis-item"><span class="tag-x">X:</span> Freq (0 → {fs/2:.0f} Hz)</div>
+            <div class="axis-item"><span class="tag-y">Y:</span> Phase (-π → +π)</div>
+            <div class="axis-item"><span class="tag-z">Z:</span> Magnitude (Peak)</div>
           </div>
           <div id="canvas-container" style="width: 100%; height: 100%;"></div>
         </div>
@@ -762,9 +764,9 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           <div class="legend-group">
             <div class="legend-item"><span class="dot" style="background: #4f46e5;"></span> Low Mag</div>
             <div class="legend-item"><span class="dot" style="background: #10b981;"></span> Mid Energy</div>
-            <div class="legend-item"><span class="dot" style="background: #eab308;"></span> Peak Resonances</div>
+            <div class="legend-item"><span class="dot" style="background: #eab308;"></span> Resonances</div>
           </div>
-          <div class="footer-tip">💡 Drag to orbit • Scroll/pinch to zoom</div>
+          <div class="footer-tip">💡 Drag / swipe to orbit</div>
         </div>
       </div>
 
@@ -772,23 +774,35 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const data = {payload};
         const container = document.getElementById('canvas-container');
         
-        let width = container.clientWidth || window.innerWidth;
-        let height = container.clientHeight || 660;
+        let width = container.clientWidth || window.innerWidth || 360;
+        let height = container.clientHeight || 540;
 
         let isRotating = true;
         let isDragging = false;
         let prevMouse = {{ x: 0, y: 0 }};
-        let rotation = {{ x: 0.36, y: -0.62 }};
+        let rotation = {{ x: 0.35, y: -0.6 }};
         
-        // GENEROUS DEFAULT ZOOM & FRAMING
-        let zoomDist = 22.5;
+        // DYNAMIC CAMERA FRAMING CALCULATION (RESPONSIVE FOR PHONES & DESKTOPS)
+        function getOptimalZoom(w, h) {{
+          const aspect = w / h;
+          if (aspect >= 1.0) {{
+            // Desktop / Landscape: 21 units
+            return 21.0;
+          }} else {{
+            // Mobile Portrait: Scale camera distance so the horizontal bounding box does NOT clip
+            const safeAspect = Math.max(0.35, aspect * 0.90);
+            return Math.max(21.0, 19.5 / safeAspect);
+          }}
+        }}
+
+        let zoomDist = getOptimalZoom(width, height);
 
         // 1. Three.js Scene Setup
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x030712);
 
-        // 2. Camera Setup (Perspective tuned to 35 degrees FOV for spacious composition)
-        const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 1000);
+        // 2. Camera Setup (Aspect ratio calculated dynamically)
+        const camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 1000);
         camera.position.set(0, 0, zoomDist);
 
         // 3. WebGL Renderer
@@ -797,20 +811,20 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         container.appendChild(renderer.domElement);
 
-        // 4. Object Group (Centered vertically with ample clearance from top and bottom)
+        // 4. Object Group
         const rootGroup = new THREE.Group();
-        rootGroup.position.y = 0.2;
+        rootGroup.position.y = 0.15;
         scene.add(rootGroup);
 
         const boxSize = 7.0;
         const halfBox = boxSize / 2;
 
-        // Cyan Floor Grid
+        // Floor Grid
         const gridHelper = new THREE.GridHelper(boxSize, 10, 0x38bdf8, 0x1e293b);
         gridHelper.position.y = -halfBox;
         rootGroup.add(gridHelper);
 
-        // Slate Bounding Wireframe Box
+        // Wireframe Box
         const boxGeom = new THREE.BoxGeometry(boxSize, boxSize, boxSize);
         const boxEdges = new THREE.EdgesGeometry(boxGeom);
         const boxLine = new THREE.LineSegments(
@@ -843,7 +857,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           const y = (p / Math.PI) * halfBox;
           const z = (m / maxMag) * boxSize - halfBox;
 
-          positions.push(x, z, y); // Magnitude mapped vertically
+          positions.push(x, z, y);
 
           const col = viridisColor(m / maxMag);
           colors.push(col.r, col.g, col.b);
@@ -867,7 +881,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         const texture = new THREE.CanvasTexture(pCanvas);
         const particlesMat = new THREE.PointsMaterial({{
-          size: 0.24,
+          size: 0.22,
           vertexColors: true,
           map: texture,
           transparent: true,
@@ -878,8 +892,10 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         const pointCloud = new THREE.Points(particlesGeom, particlesMat);
         rootGroup.add(pointCloud);
 
-        // Interaction Listeners (Mouse & Touch)
+        // Interaction Listeners (Mouse & Touch gestures)
         const dom = renderer.domElement;
+        let initialPinchDist = null;
+        let startZoomOnPinch = zoomDist;
         
         dom.addEventListener('pointerdown', (e) => {{
           isDragging = true;
@@ -895,11 +911,41 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           rotation.x += dy * 0.008;
         }});
 
-        window.addEventListener('pointerup', () => {{ isDragging = false; }});
+        window.addEventListener('pointerup', () => {{ 
+          isDragging = false; 
+        }});
+
+        // Touch Pinch-to-Zoom Support
+        dom.addEventListener('touchstart', (e) => {{
+          if (e.touches.length === 2) {{
+            initialPinchDist = Math.hypot(
+              e.touches[0].clientX - e.touches[1].clientX,
+              e.touches[0].clientY - e.touches[1].clientY
+            );
+            startZoomOnPinch = zoomDist;
+          }}
+        }}, {{ passive: true }});
+
+        dom.addEventListener('touchmove', (e) => {{
+          if (e.touches.length === 2 && initialPinchDist) {{
+            const currentDist = Math.hypot(
+              e.touches[0].clientX - e.touches[1].clientX,
+              e.touches[0].clientY - e.touches[1].clientY
+            );
+            const factor = initialPinchDist / Math.max(10, currentDist);
+            zoomDist = Math.max(8, Math.min(48, startZoomOnPinch * factor));
+          }}
+        }}, {{ passive: true }});
+
+        dom.addEventListener('touchend', (e) => {{
+          if (e.touches.length < 2) {{
+            initialPinchDist = null;
+          }}
+        }}, {{ passive: true }});
 
         dom.addEventListener('wheel', (e) => {{
           e.preventDefault();
-          zoomDist = Math.max(8, Math.min(36, zoomDist + e.deltaY * 0.015));
+          zoomDist = Math.max(8, Math.min(48, zoomDist + e.deltaY * 0.02));
         }}, {{ passive: false }});
 
         function toggleRotate() {{
@@ -908,12 +954,12 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
         }}
 
         function zoom(delta) {{
-          zoomDist = Math.max(8, Math.min(36, zoomDist + delta));
+          zoomDist = Math.max(8, Math.min(48, zoomDist + delta));
         }}
 
         function resetView() {{
-          rotation = {{ x: 0.36, y: -0.62 }};
-          zoomDist = 22.5;
+          rotation = {{ x: 0.35, y: -0.6 }};
+          zoomDist = getOptimalZoom(width, height);
         }}
 
         function snapshot() {{
@@ -924,7 +970,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           link.click();
         }}
 
-        // Real-Time WebGL Render Loop
+        // Render Loop
         let lastTime = performance.now();
         function animate() {{
           requestAnimationFrame(animate);
@@ -932,7 +978,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
           const dt = (now - lastTime) / 1000;
           lastTime = now;
 
-          if (isRotating && !isDragging) {{
+          if (isRotating && !isDragging && !initialPinchDist) {{
             rotation.y += dt * 0.35;
           }}
 
@@ -947,8 +993,8 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
 
         // Responsive Resize Observer
         const resizeObserver = new ResizeObserver(() => {{
-          width = container.clientWidth || window.innerWidth;
-          height = container.clientHeight || 660;
+          width = container.clientWidth || window.innerWidth || 360;
+          height = container.clientHeight || 540;
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
           renderer.setSize(width, height);
@@ -958,7 +1004,7 @@ def render_exact_threejs_spectrum(freqs, phase, magnitude, fs):
     </body>
     </html>
     """
-    components.html(html_code, height=780)
+    components.html(html_code, height=660)
 
 
 # ============================================================================
@@ -1219,7 +1265,7 @@ if app_mode == "📈 1D Signal Studio":
     plt.close(fig1)
 
     # ========================================================================
-    # 🌟 3D FFT SPECTRUM (SPACIOUS 780px WINDOW & BALANCED MARGINS)
+    # 🌟 3D FFT SPECTRUM (RESPONSIVE THREE.JS)
     # ========================================================================
     st.subheader("3D FFT Spectrum Landscape")
     phase = np.angle(fft_complex)
