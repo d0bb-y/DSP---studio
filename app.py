@@ -1129,62 +1129,21 @@ if app_mode == "📈 1D Signal Studio":
     elif source == "Record Live Audio":
         st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
 
-        if "recorder_key_version" not in st.session_state:
-            st.session_state.recorder_key_version = 0
-        recorder_key = f"live_audio_recorder_{st.session_state.recorder_key_version}"
+        recorded_audio = st.sidebar.audio_input(
+            "Record from your microphone",
+            key="live_audio_recorder",
+        )
 
-        mic_rec = None
-        try:
-            from streamlit_mic_recorder import mic_recorder
-            mic_rec = mic_recorder
-        except ImportError:
-            try:
-                mod = _ensure_package("streamlit-mic-recorder", "streamlit_mic_recorder")
-                mic_rec = getattr(mod, "mic_recorder", None)
-            except Exception:
-                mic_rec = None
-
-        audio_bytes = None
-        with st.sidebar:
-            if mic_rec is not None:
-                audio_record = mic_rec(
-                    start_prompt="🎙️ Record from microphone",
-                    stop_prompt="⏹️ Stop recording",
-                    key=recorder_key,
-                    format="wav",
-                    use_container_width=True
-                )
-                if audio_record is not None and "bytes" in audio_record and len(audio_record["bytes"]) > 0:
-                    audio_bytes = audio_record["bytes"]
-            else:
-                recorded_audio = st.audio_input(
-                    "Record from your microphone",
-                    key=recorder_key,
-                )
-                if recorded_audio is not None:
-                    audio_bytes = recorded_audio.getvalue()
-
-        if audio_bytes is None or len(audio_bytes) == 0:
+        if recorded_audio is None:
             st.info("Record audio using the sidebar widget, or pick another source to try it instantly.")
             st.stop()
-
-        with st.sidebar:
-            st.markdown("<p style='font-size: 14px; margin-top: 8px; margin-bottom: 4px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
-            p_col1, p_col2 = st.columns([4, 1])
-            with p_col1:
-                st.audio(audio_bytes, format="audio/wav")
-            with p_col2:
-                st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-                if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
-                    st.session_state.recorder_key_version += 1
-                    st.rerun()
 
         # Process the recorded audio normally - identical to the uploaded-file path.
         safe_filename = f"{uuid.uuid4().hex}_live_recording.wav"
         tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
 
         with open(tmp_path, "wb") as f:
-            f.write(audio_bytes)
+            f.write(recorded_audio.getvalue())
 
         try:
             fs, signal, n_interp, fs_warning = load_any_signal(tmp_path)
