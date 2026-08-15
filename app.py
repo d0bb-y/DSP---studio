@@ -1124,59 +1124,63 @@ if app_mode == "📈 1D Signal Studio":
 
         if "recorder_key_version" not in st.session_state:
             st.session_state.recorder_key_version = 0
-        recorder_key = f"live_audio_recorder_{st.session_state.recorder_key_version}"
+        recorder_key = f"live_mic_{st.session_state.recorder_key_version}"
 
-        # Maintain mounted container in layout tree so internal canvas/decodeAudioData logic retains natural dimensions
-        recorder_box = st.sidebar.container(key="live_recorder_box")
-        with recorder_box:
-            recorded_audio = st.audio_input(
+        # Use streamlit-mic-recorder to eliminate st.audio_input's internal canvas & waveform crashes
+        use_mic_recorder = False
+        try:
+            mic_mod = _ensure_package("streamlit-mic-recorder", "streamlit_mic_recorder")
+            mic_recorder_func = mic_mod.mic_recorder
+            use_mic_recorder = True
+        except Exception:
+            use_mic_recorder = False
+
+        recorded_bytes = st.session_state.get("saved_live_audio_bytes", None)
+
+        if use_mic_recorder:
+            if recorded_bytes is None:
+                st.sidebar.markdown("<p style='font-size: 13px; color: #94a3b8;'>Record from your microphone:</p>", unsafe_allow_html=True)
+                audio_result = mic_recorder_func(
+                    start_prompt="🎙️ Record Audio",
+                    stop_prompt="⏹️ Stop Recording",
+                    just_once=False,
+                    use_container_width=True,
+                    key=recorder_key,
+                )
+                if audio_result and isinstance(audio_result, dict) and audio_result.get("bytes"):
+                    st.session_state["saved_live_audio_bytes"] = audio_result["bytes"]
+                    st.rerun()
+                else:
+                    st.info("Record audio using the button in the sidebar, or pick another source to try it instantly.")
+                    st.stop()
+            else:
+                st.sidebar.markdown("<p style='font-size: 14px; margin-bottom: 8px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
+                p_col1, p_col2 = st.sidebar.columns([4, 1])
+                with p_col1:
+                    st.audio(recorded_bytes, format="audio/wav")
+                with p_col2:
+                    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+                    if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
+                        st.session_state["saved_live_audio_bytes"] = None
+                        st.session_state.recorder_key_version += 1
+                        st.rerun()
+        else:
+            # Clean fallback without fragile CSS mutations
+            recorded_audio = st.sidebar.audio_input(
                 "🎙️ Record from your microphone",
                 key=recorder_key,
             )
-
-        if recorded_audio is None:
-            st.info("Record audio using the widget in the sidebar, or pick another source to try it instantly.")
-            st.stop()
-
-        # Seamlessly hide the native recorder widget without breaking internal canvas geometry
-        st.sidebar.markdown(
-            """
-            <style>
-            .st-key-live_recorder_box {
-                height: 0px !important;
-                min-height: 0px !important;
-                max-height: 0px !important;
-                overflow: hidden !important;
-                opacity: 0 !important;
-                pointer-events: none !important;
-                margin: 0 !important;
-                padding: 0 !important;
-            }
-            .st-key-live_recorder_box [data-testid="stAlert"] {
-                display: none !important;
-            }
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.sidebar.markdown("<p style='font-size: 14px; margin-bottom: 8px;'>🎙️ <b>Your Recording</b></p>", unsafe_allow_html=True)
-
-        p_col1, p_col2 = st.sidebar.columns([4, 1])
-        with p_col1:
-            st.audio(recorded_audio, format="audio/wav")
-        with p_col2:
-            st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-            if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
-                st.session_state.recorder_key_version += 1
-                st.rerun()
+            if recorded_audio is None:
+                st.info("Record audio using the widget in the sidebar, or pick another source to try it instantly.")
+                st.stop()
+            recorded_bytes = recorded_audio.getvalue()
 
         # Process the recorded audio normally - identical to the uploaded-file path.
         safe_filename = f"{uuid.uuid4().hex}_live_recording.wav"
         tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
 
         with open(tmp_path, "wb") as f:
-            f.write(recorded_audio.getbuffer())
+            f.write(recorded_bytes)
 
         try:
             fs, signal, n_interp, fs_warning = load_any_signal(tmp_path)
