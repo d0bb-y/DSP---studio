@@ -1118,20 +1118,39 @@ if app_mode == "📈 1D Signal Studio":
         else:
             st.info("Upload a file in the sidebar, or pick a demo source to try it instantly.")
             st.stop()
+            
     elif source == "Record Live Audio":
         st.sidebar.markdown('<p style="margin-bottom: 4px;"></p>', unsafe_allow_html=True)
         recorded_audio = st.sidebar.audio_input(
             "🎙️ Record from your microphone",
-            sample_rate=44100,
             key="live_audio_recorder"
         )
 
         if recorded_audio is not None:
+            # --- Aesthetic Preview & Delete Section ---
+            st.sidebar.markdown("---")
+            st.sidebar.markdown("<p style='font-size: 13px; margin-bottom: 5px; color: #94a3b8;'>🎧 <b>Preview & Manage Recording</b></p>", unsafe_allow_html=True)
+            
+            # Use columns to align the audio player and the trash bin
+            p_col1, p_col2 = st.sidebar.columns([4, 1])
+            with p_col1:
+                st.audio(recorded_audio)
+            with p_col2:
+                # Spacer to push the button down slightly so it visually aligns with the player
+                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                
+                # Using type="primary" makes the button red in Streamlit's default dark mode
+                if st.button("🗑️", key="delete_audio", type="primary", help="Delete recording", use_container_width=True):
+                    if "live_audio_recorder" in st.session_state:
+                        del st.session_state["live_audio_recorder"]
+                    st.rerun()
+            # ------------------------------------------
+
             safe_filename = f"{uuid.uuid4().hex}_live_recording.wav"
             tmp_path = os.path.join(tempfile.gettempdir(), safe_filename)
 
             with open(tmp_path, "wb") as f:
-                f.write(recorded_audio.getbuffer())
+                f.write(recorded_audio.getvalue())
 
             try:
                 fs, signal, n_interp, fs_warning = load_any_signal(tmp_path)
@@ -1145,6 +1164,7 @@ if app_mode == "📈 1D Signal Studio":
         else:
             st.info("Record audio using the widget in the sidebar, or pick another source to try it instantly.")
             st.stop()
+            
     elif source == "Demo: Real Audio (Voice)":
         with st.spinner("Loading real audio sample..."):
             try:
